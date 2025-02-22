@@ -1,8 +1,12 @@
 import json
+import shutil
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
+from typing import Generator
+
+import platformdirs
 
 from JSONtokenizer import compute_word_frequencies, tokenize_JSON_file
 
@@ -15,12 +19,44 @@ class Posting:
     doc_id: int
     frequency: int
 
+# The name of the entire A3 application.
+_APP_NAME = 'CS121_A3'
+# Local data dir for this application.
+_APP_DATA_DIR = Path(platformdirs.user_data_dir(_APP_NAME))
+_INDEXES_DIR = _APP_DATA_DIR / 'indexes'
+
+# Wipe the old indexes, if any.
+if _INDEXES_DIR.exists():
+    shutil.rmtree(_INDEXES_DIR)
+
 class InvertedIndex:
     """
     An inverted index storing document Posting objects by token.
     """
     def __init__(self):
         self._internal: dict[str, list[Posting]] = defaultdict(list)
+        self._disk_dir: Path = _INDEXES_DIR / f'index-{self.__hash__()}'
+
+    @property
+    def disk_dir(self) -> Path:
+        """
+        The directory containing this index's partitioned disk files.
+
+        Returns:
+            Path to disk directory.
+        """
+        return self._disk_dir
+
+    @property
+    def disks(self) -> Generator[Path, None, None]:
+        """
+        The index's partitioned disk files. This is where index content is stored, which may be
+        spread over multiple files.
+
+        Returns:
+            Generator of Paths pointing to disk files.
+        """
+        yield from self._disk_dir.iterdir()
 
     def add(self, json_path: Path):
         """
@@ -32,6 +68,24 @@ class InvertedIndex:
         for token, freq in compute_word_frequencies(tokenize_JSON_file(json_path)).items():
             # TODO: replace with real id once available.
             self._internal[token].append(Posting(doc_id = 0, frequency = freq))
+
+    def flush(self, path: Path = None):
+        """
+        Write the inverted index to disk and wipe its in-memory data.
+
+        Args:
+            path: Optional disk to write to. The default is to write somewhere in the user data
+            i.e. C:/../AppData/Local/... in windows. This path is accessible via the #disk_dir
+            property.
+        """
+        if not path:
+            path = self._disk_dir
+
+        path.mkdir(parents = True, exist_ok = True)
+        with open(path / 'disk.json', "w") as f:
+            json.dump(self._internal, f, default = lambda o: o.__dict__)
+
+        self._internal = {}
 
     def __getitem__(self, token: str) -> list[Posting]:
         """

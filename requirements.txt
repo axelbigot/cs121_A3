@@ -1,2 +1,3 @@
 bs4
 textblob
+platformdirs
