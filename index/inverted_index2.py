@@ -3,9 +3,11 @@ import shutil
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Generator
 
 import platformdirs
 import psutil
+from typing_extensions import TextIO
 
 from index.JSONtokenizer import compute_word_frequencies, tokenize_JSON_file
 from index.url_mapper import URLMapper
@@ -78,11 +80,34 @@ class InvertedIndex2:
         # _Partition class above.
         self._partitions: list[_Partition] = list()
 
+        # In-memory portion of the index.
         self._in_memory: defaultdict[str, list[Posting]] = defaultdict(list)
+        # URL-to-id mapper.
         self._url_id_mapper = URLMapper(root_dir)
 
         self._feedr(root_dir)
         self._flush()
+
+    @property
+    def partition_dir(self) -> Path:
+        """
+        The directory containing this index's partitioned disk files.
+
+        Returns:
+            Path to disk directory.
+        """
+        return self._partition_dir
+
+    @property
+    def disk_partitions(self) -> Generator[Path, None, None]:
+        """
+        The index's partitioned disk files. These are the physical indexes where content is stored,
+        which may be spread over multiple files.
+
+        Returns:
+            Generator of Paths pointing to disk files.
+        """
+        yield self._temp_file
 
     def _add(self, json_path: Path):
         """
@@ -120,7 +145,13 @@ class InvertedIndex2:
         is somewhere in the user data i.e. C:/../AppData/Local/... in windows. This path is
         accessible via the #disk_dir property.
         """
-        self._temp_file.parent.mkdir(parents = True, exist_ok = True)  # Ensure directory exists
+        self._temp_file.parent.mkdir(parents = True, exist_ok = True)
+        self._merge_with_disk()
+
+        self._in_memory.clear()
+        self._curr_in_memory_postings = 0
+
+    def _merge_with_disk(self):
         temp_merged_file = self._partition_dir / 'temp_merged.json'
 
         with open(temp_merged_file, 'w') as out:
@@ -128,23 +159,43 @@ class InvertedIndex2:
                 with open(self._temp_file, 'r') as disk_file:
                     for line in disk_file:
                         entry = json.loads(line.strip())
+                        # Disk token and its postings.
                         token, postings = list(entry.items())[0]
 
-                        for lesser_token in (t for t in list(sorted(self._in_memory.keys())) if t < token):
-                            out.write(json.dumps({lesser_token: [posting.__dict__ for posting in self._in_memory.pop(lesser_token)]}) + '\n')
+                        # To maintain proper sorted order on disk, for any in-memory tokens that
+                        # are less than the current disk token, write them to disk first.
+                        for lesser_token in (
+                                t for t in list(sorted(self._in_memory.keys())) if t < token):
+                            self._dump_memory_postings(out, lesser_token)
 
+                        # Combine the disk postings with in-memory postings for the same token,
+                        # if any.
                         if token in self._in_memory:
                             postings.extend(
                                 posting.__dict__ for posting in self._in_memory.pop(token))
+
+                        # Write the combined token-posting entry to disk.
                         out.write(json.dumps({token: postings}) + '\n')
 
+            # Flush any tokens that were not already added from memory to the end of the disk.
+            # If they weren't added, it means they're greater than all tokens in disk.
             for token in list(sorted(self._in_memory.keys())):
-                out.write(json.dumps({ token: [posting.__dict__ for posting in self._in_memory.pop(token)] }) + '\n')
+                self._dump_memory_postings(out, token)
 
+        # Discard the old disk and replace it with this new merged disk.
         temp_merged_file.replace(self._temp_file)
 
-        self._in_memory.clear()
-        self._curr_in_memory_postings = 0
+    def _dump_memory_postings(self, out: TextIO, token: str):
+        """
+        Write the postings of a token in memory to disk, and remove it from memory.
+
+        Args:
+            out: The disk.
+            token: Token to dump from memory.
+        """
+        # JSONify the entry and write to disk, removing from memory.
+        out.write(json.dumps({ token: [posting.__dict__ for posting in
+                                    self._in_memory.pop(token)]}) + '\n')
 
     def _memory_low(self) -> bool:
         """
