@@ -134,7 +134,7 @@ class IndexTests(unittest.TestCase):
         """
         Tests that flushing to disk works as expected.
         """
-        files = Path('developer/DEV/alderis_ics_uci_edu').glob('*.json')
+        files = Path('../developer/DEV/alderis_ics_uci_edu').glob('*.json')
 
         # No posting limit to allow manual flushing for this test.
         index = InvertedIndex(max_in_memory_postings = 99999)
