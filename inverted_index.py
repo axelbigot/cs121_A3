@@ -7,6 +7,7 @@ from types import MappingProxyType
 from typing import Generator
 
 import platformdirs
+import psutil
 
 from JSONtokenizer import compute_word_frequencies, tokenize_JSON_file
 
@@ -25,9 +26,35 @@ _APP_NAME = 'CS121_A3'
 _APP_DATA_DIR = Path(platformdirs.user_data_dir(_APP_NAME))
 _INDEXES_DIR = _APP_DATA_DIR / 'indexes'
 
+# Percentage of remaining memory at which time the index should be flushed to disk.
+_FLUSH_MEMORY_THRESHOLD = 0.5
+
 # Wipe the old indexes, if any.
 if _INDEXES_DIR.exists():
     shutil.rmtree(_INDEXES_DIR)
+
+def _memory_low() -> bool:
+    """
+    Check if memory is too low.
+    Returns:
+        True if memory is too low, False otherwise.
+    """
+    # RAM & other virtual mem.
+    vmem = psutil.virtual_memory()
+    return vmem.available < vmem.total * _FLUSH_MEMORY_THRESHOLD
+
+def _set_memory_low_th(perc: float):
+    """
+    Set the global low memory threshold.
+
+    Args:
+        perc: Percentage of total memory that is considered low memory.
+    """
+    if perc > 1 or perc < 0:
+        raise ValueError('Percentage must be between 0 and 1.')
+
+    global _FLUSH_MEMORY_THRESHOLD
+    _FLUSH_MEMORY_THRESHOLD = perc
 
 class InvertedIndex:
     """
@@ -69,23 +96,22 @@ class InvertedIndex:
             # TODO: replace with real id once available.
             self._internal[token].append(Posting(doc_id = 0, frequency = freq))
 
-    def flush(self, path: Path = None):
-        """
-        Write the inverted index to disk and wipe its in-memory data.
+        if _memory_low():
+            self.flush()
 
-        Args:
-            path: Optional disk to write to. The default is to write somewhere in the user data
-            i.e. C:/../AppData/Local/... in windows. This path is accessible via the #disk_dir
-            property.
+    def flush(self):
         """
-        if not path:
-            path = self._disk_dir
+        Write the inverted index to disk and wipe its in-memory data. The location of the data
+        is somewhere in the user data i.e. C:/../AppData/Local/... in windows. This path is
+        accessible via the #disk_dir property.
+        """
+        path = self._disk_dir
 
         path.mkdir(parents = True, exist_ok = True)
         with open(path / 'disk.json', "w") as f:
             json.dump(self._internal, f, default = lambda o: o.__dict__)
 
-        self._internal = {}
+        self._internal = defaultdict(list)
 
     def __getitem__(self, token: str) -> list[Posting]:
         """

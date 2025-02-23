@@ -1,8 +1,11 @@
 import unittest
 from dataclasses import fields
+from mailcap import subst
 from pathlib import Path
 
-from inverted_index import construct_index_recursively, Posting
+import psutil
+
+from inverted_index import construct_index_recursively, Posting, _set_memory_low_th, InvertedIndex
 
 
 def print_trunc(o, chars: int = 500):
@@ -41,6 +44,24 @@ class IndexTests(unittest.TestCase):
                 # (there are better ways to do this)
                 for attr in fields(Posting):
                     self.assertIn(f'"{attr.name}":', content)
+
+    def test_flush_index_when_low_memory(self):
+        # Always flush to disk.
+        threshold = 1
+        _set_memory_low_th(threshold)
+
+        subset = 'developer/DEV/alderis_ics_uci_edu'
+        index = InvertedIndex()
+
+        for page in Path(subset).rglob('*.json'):
+            mem = psutil.virtual_memory()
+            print(f'Available memory: {mem.available} / {mem.total} ({mem.percent}%)')
+
+            if mem.percent < threshold * 100:
+                self.assertTrue(not index._internal)
+                print(f'Index flushed to disk ({threshold * 100}% threshold)')
+
+            index.add(page)
 
 if __name__ == '__main__':
     unittest.main()
