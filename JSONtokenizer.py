@@ -1,7 +1,7 @@
 import re
 import json
 from bs4 import BeautifulSoup
-import os
+from textblob import Word
 
 def tokenize(string):
     """
@@ -53,10 +53,4 @@ def tokenize_JSON_file(path):
         obj = json.load(file) # convert json to dictionary
         soup = BeautifulSoup(obj['content'], 'html.parser')
         
-        return tokenize(soup.get_text())
-
-if __name__ == '__main__':
-    for dirname in os.listdir('DEV'):
-        dirname1 = os.path.join('DEV', dirname)
-        for filename in os.listdir(dirname1):
-            tokenize_JSON_file(os.path.join(dirname1, filename))
+        return (Word(token).lemmatize() for token in tokenize(soup.get_text()))
