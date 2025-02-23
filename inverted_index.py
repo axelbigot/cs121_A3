@@ -41,7 +41,7 @@ def _memory_low() -> bool:
     """
     # RAM & other virtual mem.
     vmem = psutil.virtual_memory()
-    return vmem.available < vmem.total * _FLUSH_MEMORY_THRESHOLD
+    return vmem.percent < _FLUSH_MEMORY_THRESHOLD * 100
 
 def _set_memory_low_th(perc: float):
     """
