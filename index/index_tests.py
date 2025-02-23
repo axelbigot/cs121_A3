@@ -5,6 +5,7 @@ from dataclasses import fields
 from datetime import datetime
 from types import MethodType
 
+from index.inverted_index2 import InvertedIndex2
 from inverted_index import *
 
 
@@ -189,6 +190,9 @@ class IndexTests(unittest.TestCase):
             # Flush should have been called at least once since we are violating memory threshold
             # (100%) every time.
             self.assertTrue(flush_called, 'InvertedIndex.flush was never called')
+
+    def test_index(self):
+        index = InvertedIndex2('../developer/DEV', max_in_memory_postings = 500)
 
 if __name__ == '__main__':
     unittest.main()

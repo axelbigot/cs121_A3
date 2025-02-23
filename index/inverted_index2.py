@@ -130,14 +130,16 @@ class InvertedIndex2:
                         entry = json.loads(line.strip())
                         token, postings = list(entry.items())[0]
 
+                        for lesser_token in (t for t in list(sorted(self._in_memory.keys())) if t < token):
+                            out.write(json.dumps({lesser_token: [posting.__dict__ for posting in self._in_memory.pop(lesser_token)]}) + '\n')
+
                         if token in self._in_memory:
                             postings.extend(
                                 posting.__dict__ for posting in self._in_memory.pop(token))
-
                         out.write(json.dumps({token: postings}) + '\n')
 
-            for token, postings in self._in_memory.items():
-                out.write(json.dumps({token: [posting.__dict__ for posting in postings]}) + '\n')
+            for token in list(sorted(self._in_memory.keys())):
+                out.write(json.dumps({ token: [posting.__dict__ for posting in self._in_memory.pop(token)] }) + '\n')
 
         temp_merged_file.replace(self._temp_file)
 
