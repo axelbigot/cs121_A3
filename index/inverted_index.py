@@ -271,6 +271,7 @@ class InvertedIndex:
         self.id = str(_id) if _id else str(self.__hash__())
         self.max_in_memory_postings = max_in_memory_postings
         self.min_avail_memory_perc = min_avail_memory_perc
+        self.doc_count = 0
 
         # Directory that will contain all partitions for this index.
         self._partition_dir: Path = _INDEXES_DIR / f'index-{self.id}'
@@ -326,6 +327,7 @@ class InvertedIndex:
             # available), flush (write) the index to physical disk file.
             if self._curr_in_memory_postings >= self.max_in_memory_postings or self._memory_low():
                 self.flush()
+        self.doc_count += 1
 
     def feedr(self, root_dir_path: str | Path):
         """
