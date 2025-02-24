@@ -1,3 +1,3 @@
-from inverted_index import InvertedIndex
+from .inverted_index import InvertedIndex
 
 __all__ = ['InvertedIndex']

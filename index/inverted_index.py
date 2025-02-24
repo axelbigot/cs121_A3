@@ -2,13 +2,16 @@ import json
 import shutil
 from collections import defaultdict
 from dataclasses import dataclass
+from itertools import tee
 from pathlib import Path
 from typing import Generator
 
 import platformdirs
 import psutil
+from typing_extensions import TextIO
 
-from JSONtokenizer import compute_word_frequencies, tokenize_JSON_file
+from index.JSONtokenizer import compute_word_frequencies, tokenize_JSON_file
+from index.url_mapper import URLMapper
 
 
 # The name of the entire A3 application.
@@ -44,12 +47,16 @@ class _Partition:
     that handles tokens from 'ant' to 'crab' ('cab' falls in this range) which will be a file that
     can scanned in one I/O operation. Note the actual token range that a partition governs over may
     differ from the example.
+
+    Args:
+        partition_dir: Directory where all other related partitions are stored.
+        postings: The inverted index postings that this partition will govern.
     """
-    def __init__(self, partition_dir: Path):
+    def __init__(self, partition_dir: Path, postings: dict[str, list[Posting]]):
         # The in-memory inverted index (for this partition).
         # This is the portion of the partition that is "being built" and has not yet been written
         # to disk.
-        self._in_memory: dict[str, list[Posting]] = defaultdict(list)
+        self._in_memory: dict[str, list[Posting]] = postings
 
         # The root directory for this partition. This is where other partitions belonging to the
         # same full inverted index will also be stored.
@@ -66,8 +73,8 @@ class _Partition:
         # The path to this partitions disk storage.
         self._path: Path | None = None
 
-        # Whether this partition has written to disk.
-        self._has_disk = False
+        # Write to disk.
+        self._flush()
 
     @property
     def min_token(self) -> str | None:
@@ -103,35 +110,6 @@ class _Partition:
         """
         return self._path
 
-    def has_disk(self) -> bool:
-        """
-        Whether this partition has a physical disk component and has actually written to disk.
-
-        Returns:
-            True if a write to disk occurred, False otherwise.
-        """
-        return self._has_disk
-
-    def has_memory(self) -> bool:
-        """
-        Whether this partition has a virtual memory component (some portion of the partition is not
-        written to disk, perhaps it is pending a flush).
-
-        Returns:
-            True if partition contains unflushed data, False otherwise.
-        """
-        return bool(self._in_memory)
-
-    def add(self, token: str, posting: Posting):
-        """
-        Add a posting to this partition.
-
-        Args:
-            token: The token associated with this posting.
-            posting: The posting object.
-        """
-        self._in_memory[token].append(posting)
-
     def get(self, token: str) -> list[Posting]:
         """
         Retrieve a token's postings from this partition. Searches both virtual and physical (disk)
@@ -143,16 +121,7 @@ class _Partition:
         Returns:
             List of Posting objects associated with the token.
         """
-        # Start by retrieving any token postings in the virtual memory component.
-        all_data = self._in_memory[token]
-
-        # If a physical component exists, fetch the token postings and combine them with the
-        # virtual postings.
-        if self.has_disk():
-            all_data += self.fetch()[token]
-
-        # The final result is all the token's postings, be they written to disk or not.
-        return all_data
+        return self.fetch()[token]
 
     def fetch(self) -> defaultdict[str, list[Posting]]:
         """
@@ -174,35 +143,6 @@ class _Partition:
         # the in-memory component.
         return result
 
-    def flush(self):
-        """
-        Flush this partition's virtual inverted index to disk, merging with existing physical
-        component if any exists.
-        """
-        # TODO: Split physical partition if too large. Currently getting very skewed partitions!
-
-        # If this partition has never written to disk, initialize its defining attributes.
-        if not self.has_disk():
-            sorted_tokens = sorted(self._in_memory)
-            # Set the min and max tokens of the partition. This is the "scope" of the partition.
-            self._min_token, self._max_token = sorted_tokens[0], sorted_tokens[-1]
-            # Set the path to its physical disk, which will be created shortly.
-            self._path = self._partition_dir / f'partition_{self._min_token}_{self._max_token}'
-
-        # Create disk if DNE.
-        self._path.parent.mkdir(parents = True, exist_ok = True)
-
-        # Merge current disk (if any) with virtual component (in-place merging).
-        new_disk = self._merge_with_disk() if self.has_disk() else self._in_memory
-        with open(self._path, "w") as f:
-            # Write to disk
-            json.dump(new_disk, f, default = lambda o: o.__dict__)
-
-        # Update flag after successful flush.
-        self._has_disk = True
-        # Clear virtual memory. It's all written to disk now.
-        self._in_memory.clear()
-
     def items(self) -> Generator[tuple[str, list[Posting]], None, None]:
         """
         Get the token-postings items of this partition, searching both physical and virtual
@@ -211,32 +151,29 @@ class _Partition:
         Returns:
             Generator of dictionary-style token-postings items.
         """
-        yield from self._merge_with_disk().items() if self.has_disk() else self._in_memory.items()
+        yield from self.fetch().items()
 
-    def _merge_with_disk(self) -> dict[str, list[Posting]]:
+    def _flush(self):
         """
-        Merge this partition's virtual inverted index with existing disk component if any exists.
-        Retrieves the physical inverted index from disk and transfers postings from the virtual
-        component to it. Given the physical component size P and virtual component size V, the
-        worst-case space complexity of this operation is T(P + V + 1) (const 1 posting during
-        transfer).
-
-        Returns:
-            Merged physical and virtual inverted index components, now all in memory.
+        Flush this partition's virtual inverted index to disk, merging with existing physical
+        component if any exists.
         """
-        # Retrieve physical component.
-        disk = self.fetch()
-        for token in list(self._in_memory.keys()):
-            if token in disk:
-                # Append token postings from memory component to existing entries on disk.
-                disk[token].extend(self._in_memory[token])
-            else:
-                # No entries for this token on disk (new from virtual).
-                disk[token] = self._in_memory[token]
+        # Initialize this partition's defining attributes.
+        sorted_tokens = sorted(self._in_memory)
+        # Set the min and max tokens of the partition. This is the "scope" of the partition.
+        self._min_token, self._max_token = sorted_tokens[0], sorted_tokens[-1]
+        # Set the path to its physical disk, which will be created shortly.
+        self._path = self._partition_dir / f'partition_{self._min_token}_{self._max_token}.json'
 
-            # Delete transferred postings from memory, ensuring minimal memory usage.
-            del self._in_memory[token]
-        return disk
+        # Create disk if DNE.
+        self._path.parent.mkdir(parents = True, exist_ok = True)
+
+        with open(self._path, "w") as f:
+            # Write to disk
+            json.dump(self._in_memory, f, default = lambda o: o.__dict__)
+
+        # Clear virtual memory. It's all written to disk now.
+        self._in_memory.clear()
 
     def __iter__(self) -> Generator[str, None, None]:
         """
@@ -245,10 +182,10 @@ class _Partition:
         Returns:
             Generator of token strings.
         """
-        yield from self._merge_with_disk() if self.has_disk() else self._in_memory
+        yield from self.fetch()
 
     def __str__(self):
-        return json.dumps(self._in_memory, default = lambda o: o.__dict__, indent = 2)
+        return json.dumps(self.fetch(), default = lambda o: o.__dict__, indent = 2)
 
     def __repr__(self):
         return f'Partition(min_token = {self._min_token}, max_token = {self._max_token})'
@@ -258,6 +195,8 @@ class InvertedIndex:
     An inverted index storing document Posting objects by token.
 
     Args:
+        root_dir: The root directory from where to being json file processing when building the
+        index.
         _id: Custom unique id. The default is to use the object's hash. This doubles as the name
         of the index dir.
         max_in_memory_postings: Maximum number of postings to store in memory. When this is crossed,
@@ -265,7 +204,8 @@ class InvertedIndex:
         min_avail_memory_perc: Minimum available memory as a percentage of the total available
         memory until the index is flushed to disk.
     """
-    def __init__(self, _id: str | int | None = None, *,
+    def __init__(self, root_dir: str | Path,
+                 _id: str | int | None = None, *,
                  max_in_memory_postings: int = _DEF_FLUSH_POSTINGS_THRESHOLD,
                  min_avail_memory_perc: float = _DEF_FLUSH_MEMORY_THRESHOLD):
         self.id = str(_id) if _id else str(self.__hash__())
@@ -275,6 +215,7 @@ class InvertedIndex:
 
         # Directory that will contain all partitions for this index.
         self._partition_dir: Path = _INDEXES_DIR / f'index-{self.id}'
+        self._temp_file = self._partition_dir / 'temp.json'
 
         # Total count of postings in virtual memory across all partitions.
         self._curr_in_memory_postings: int = 0
@@ -283,10 +224,24 @@ class InvertedIndex:
         # _Partition class above.
         self._partitions: list[_Partition] = list()
 
-        # Special memory-only partition used for postings that do not have an existing partition.
-        # They are all added here, and flushed for the first time in the next flush cycle, at which
-        # point this special partition is reset to an empty partition for the next cycle.
-        self._misc_partition: _Partition = _Partition(self._partition_dir)
+        # In-memory portion of the index.
+        self._in_memory: defaultdict[str, list[Posting]] = defaultdict(list)
+        # URL-to-id mapper.
+        self._url_id_mapper = URLMapper(root_dir)
+
+        # TODO: Hacky way of representing a merged index as a single partition. In the future,
+        # TODO: this will be replaced by dedicated partitions.
+        self._min_token: str | None = None
+        self._max_token: str | None = None
+
+        self._feedr(root_dir)
+        self._flush()
+
+        # TODO: Part of same hack above. Will be removed when partitions are properly implemented.
+        # TODO: for now, we're using a single merged index.
+        self._partitions.append(_Partition(self._partition_dir,
+                                           {self._min_token: [], self._max_token: []}))
+        self._temp_file.replace(self._partitions[0].path)
 
     @property
     def partition_dir(self) -> Path:
@@ -309,58 +264,6 @@ class InvertedIndex:
         """
         return (p.path for p in self._partitions)
 
-    def add(self, json_path: Path):
-        """
-        Assimilate a document into the inverted index.
-
-        Args:
-            json_path: Path to JSON document.
-        """
-        for token, freq in compute_word_frequencies(tokenize_JSON_file(json_path)).items():
-            # TODO: replace with real id once available.
-            # Add the partition for this token to the correct partition.
-            self._get_partition(token).add(token, Posting(doc_id = 0, frequency = freq))
-            # Increment in-memory postings counter.
-            self._curr_in_memory_postings += 1
-
-            # If the in-memory index has become too large (too many postings or too little memory
-            # available), flush (write) the index to physical disk file.
-            if self._curr_in_memory_postings >= self.max_in_memory_postings or self._memory_low():
-                self.flush()
-        self.doc_count += 1
-
-    def feedr(self, root_dir_path: str | Path):
-        """
-        Feed a directory of documents into the inverted index, recursively searching for and adding
-        documents within the root directory and its child directories.
-
-        Args:
-            root_dir_path: Pathlike to the root directory to be fed.
-        """
-        # Get all nested jsons in the root dir and add it to the index.
-        for file in Path(root_dir_path).rglob('*.json'):
-            self.add(file)
-
-    def flush(self):
-        """
-        Write the inverted index to disk and wipe its in-memory data. The location of the data
-        is somewhere in the user data i.e. C:/../AppData/Local/... in windows. This path is
-        accessible via the #disk_dir property.
-        """
-        # Flush each partition to disk.
-        for partition in self._partitions:
-            partition.flush()
-
-        # Flush the purely virtual miscellaneous partition to disk IFF it has content.
-        if self._misc_partition.has_memory():
-            self._misc_partition.flush()
-            # Flushed, it is now a physical partition. Add it to the list of partitions.
-            self._partitions.append(self._misc_partition)
-
-        # Reset for the next cycle.
-        self._curr_in_memory_postings = 0
-        self._misc_partition = _Partition(self._partition_dir)
-
     def items(self) -> Generator[tuple[str, list[Posting]], None, None]:
         """
         Get the token-postings items of this index, searching both physical and virtual components
@@ -369,10 +272,43 @@ class InvertedIndex:
         Returns:
             Generator of dictionary-style token-postings items.
         """
-        for partition in self._partitions + [self._misc_partition]:
-            yield from partition.items()
+        for p in self._partitions:
+            yield from p.items()
 
-    def _get_partition(self, token: str) -> _Partition:
+    def __getitem__(self, token: str) -> list[Posting]:
+        """
+        Retrieve all Postings for a given token.
+
+        Args:
+            token: The token whose Postings to retrieve.
+
+        Returns:
+            A list of all Postings for a given token.
+        """
+        partition = self._get_partition(token)
+        return partition.get(token) if partition else []
+
+    def __iter__(self) -> Generator[str, None, None]:
+        """
+        Iterate over all tokens across all partitions. Looks for tokens in disk and in memory while
+        respecting memory limits (only one partition is ever loaded at a time).
+
+        Returns:
+            Generator of token strings.
+        """
+        for partition in self._partitions:
+            # Partitions are iterable. They return all of their tokens.
+            yield from partition
+
+    def __str__(self) -> str:
+        return ' '.join(map(lambda p: str(p), self._partitions))
+
+    def __repr__(self):
+        return (f'InvertedIndex(max_in_memory_postings = {self.max_in_memory_postings}, '
+                f'min_avail_memory_perc = {self.min_avail_memory_perc}, '
+                f'partitions = {self._partitions.__repr__()})')
+
+    def _get_partition(self, token: str) -> _Partition | None:
         """
         Get the partition that governs a specified token.
 
@@ -388,8 +324,153 @@ class InvertedIndex:
             if partition.min_token <= token <= partition.max_token:
                 return partition
 
-        # If no existing partitions govern the token, add it to the special partition.
-        return self._misc_partition
+        # If no existing partitions govern the token, return none.
+        return None
+
+    def _add(self, json_path: Path):
+        """
+        Assimilate a document into the inverted index.
+
+        Args:
+            json_path: Path to JSON document.
+        """
+        for token, freq in compute_word_frequencies(tokenize_JSON_file(json_path)).items():
+            # TODO: replace with real id once available.
+            self._in_memory[token].append(Posting(doc_id = 0, frequency = freq))
+            # Increment in-memory postings counter.
+            self._curr_in_memory_postings += 1
+
+            if not self._min_token or token < self._min_token:
+                self._min_token = token
+            if not self._max_token or token > self._max_token:
+                self._max_token = token
+
+            # If the in-memory index has become too large (too many postings or too little memory
+            # available), flush (write) the index to physical disk file.
+            if self._curr_in_memory_postings >= self.max_in_memory_postings or self._memory_low():
+                self._flush()
+        self.doc_count += 1
+
+    def _feedr(self, root_dir_path: str | Path):
+        """
+        Feed a directory of documents into the inverted index, recursively searching for and adding
+        documents within the root directory and its child directories.
+
+        Args:
+            root_dir_path: Pathlike to the root directory to be fed.
+        """
+        path = Path(root_dir_path)
+
+        # If a JSON file was provided, use it.
+        if path.is_file():
+            if not path.match('*.json'):
+                raise ValueError(f'{path} is not a JSON file')
+
+            self._add(path)
+            return
+
+        # Else a dir was provided.
+        # Get all nested jsons in the root dir and add it to the index.
+        for file in path.rglob('*.json'):
+            self._add(file)
+
+    def _flush(self):
+        """
+        Write the inverted index to disk and wipe its in-memory data. The location of the data
+        is somewhere in the user data i.e. C:/../AppData/Local/... in windows. This path is
+        accessible via the #disk_dir property.
+        """
+        self._temp_file.parent.mkdir(parents = True, exist_ok = True)
+        self._merge_with_disk()
+
+        self._in_memory.clear()
+        self._curr_in_memory_postings = 0
+
+    def _merge_with_disk(self):
+        temp_merged_file = self._partition_dir / 'temp_merged.json'
+
+        with open(temp_merged_file, 'w') as out:
+            # Top level object opening brace.
+            out.write('{')
+            # Flag used to indicate when commas should be written.
+            first_entry = True
+            if self._temp_file.exists():
+                with open(self._temp_file, 'r') as disk_file:
+                    for line in disk_file:
+                        content = line.strip()
+
+                        # Do not parse top-level JSON object lines.
+                        if content in ['{', '}']:
+                            continue
+
+                        # Remove terminating comma from entry.
+                        content = content[:-1] if content[-1] == ',' else content
+
+                        # Treat the entry as its own json object to leverage python's json.loads.
+                        # Probably a bit hacky but it works. We're essentially turning a key-value
+                        # pair k: v into an object {k: v} and mapping it to our types.
+                        entry = json.loads('{' + content + '}')
+                        # Disk token and its postings.
+                        token, postings = list(entry.items())[0]
+
+                        # To maintain proper sorted order on disk, for any in-memory tokens that
+                        # are less than the current disk token, write them to disk first.
+                        for lesser_token in (
+                                t for t in list(sorted(self._in_memory.keys())) if t < token):
+                            self._dump_memory_postings(out, lesser_token, first_entry)
+                            first_entry = False
+
+                        # Combine the disk postings with in-memory postings for the same token,
+                        # if any.
+                        if token in self._in_memory:
+                            postings.extend(
+                                posting.__dict__ for posting in self._in_memory.pop(token))
+
+                        # Write the combined token-posting entry to disk.
+                        self._write_json_str_as_field(
+                            out, json.dumps({token: postings}), first_entry)
+                        first_entry = False
+
+            # Flush any tokens that were not already added from memory to the end of the disk.
+            # If they weren't added, it means they're greater than all tokens in disk.
+            for token in list(sorted(self._in_memory.keys())):
+                self._dump_memory_postings(out, token, first_entry)
+                first_entry = False
+
+            out.write('\n}')
+
+        # Discard the old disk and replace it with this new merged disk.
+        temp_merged_file.replace(self._temp_file)
+
+    def _write_json_str_as_field(self, out: TextIO, raw: str, first_entry = False):
+        """
+        Write a JSON stringified object as a field.
+
+        i.e. {k: v} becomes k: v,
+
+        Args:
+            out: The disk.
+            raw: Raw stringified json.
+            first_entry: First entry flag. Determines whether to prefix with a comma or not. If it's
+            not the first entry, this is required for valid syntax.
+        """
+        prefix = '\n' if first_entry else ',\n'
+        out.write(f'{prefix}{raw[1:-1]}')
+
+    def _dump_memory_postings(self, out: TextIO, token: str, first_entry = False):
+        """
+        Write the postings of a token in memory to disk, and remove it from memory.
+
+        Args:
+            out: The disk.
+            token: Token to dump from memory.
+            first_entry: First entry flag. Whether this is the first posting being written.
+        """
+        # JSONify the entry and write to disk, removing from memory.
+        self._write_json_str_as_field(out,
+                                      json.dumps({ token: [posting.__dict__ for posting in
+                                                           self._in_memory.pop(token)]}),
+                                      first_entry)
 
     def _memory_low(self) -> bool:
         """
@@ -400,35 +481,3 @@ class InvertedIndex:
         # RAM & other virtual mem.
         vmem = psutil.virtual_memory()
         return vmem.percent < self.min_avail_memory_perc * 100
-
-    def __getitem__(self, token: str) -> list[Posting]:
-        """
-        Retrieve all Postings for a given token.
-
-        Args:
-            token: The token whose Postings to retrieve.
-
-        Returns:
-            A list of all Postings for a given token.
-        """
-        return self._get_partition(token).get(token)
-
-    def __iter__(self) -> Generator[str, None, None]:
-        """
-        Iterate over all tokens across all partitions. Looks for tokens in disk and in memory while
-        respecting memory limits (only one partition is ever loaded at a time).
-
-        Returns:
-            Generator of token strings.
-        """
-        for partition in self._partitions + [self._misc_partition]:
-            # Partitions are iterable. They return all of their token-postings dict items.
-            yield from partition
-
-    def __str__(self) -> str:
-        return ' '.join(map(lambda p: str(p), self._partitions))
-
-    def __repr__(self):
-        return (f'InvertedIndex(max_in_memory_postings = {self.max_in_memory_postings}, '
-                f'min_avail_memory_perc = {self.min_avail_memory_perc}, '
-                f'partitions = {self._partitions.__repr__()})')

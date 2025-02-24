@@ -1,13 +1,14 @@
 import threading
 import time
 import unittest
-from dataclasses import fields
 from datetime import datetime
 from types import MethodType
 
-from index.inverted_index2 import InvertedIndex2
-from inverted_index import *
+from index.inverted_index import _Partition, _INDEXES_DIR
+from index.inverted_index import *
 
+
+SMALL_DATASET = '../developer/DEV/alderis_ics_uci_edu'
 
 def print_trunc(o, chars: int = 500):
     """
@@ -78,49 +79,55 @@ class MemPoll:
         self.stop.set()
 
 class IndexTests(unittest.TestCase):
-    def test_partition_cross_component_retrieval(self):
+    def test_partition_retrieval(self):
         """
-        Tests that posting retrieval from partitions searches both physical and virtual memory.
+        Tests retrieval of postings for a token in a partition.
         """
-        # Get some partition from the index.
-        index = InvertedIndex()
-        partition = index._misc_partition
         token = 'test'
-
         postings = [Posting(doc_id = 0, frequency = 5), Posting(doc_id = 0, frequency = 4)]
 
-        # Add a posting and flush to disk.
-        partition.add(token, postings[0])
-        partition.flush()
-
-        # Add another posting for the same token and do not flush to disk.
-        partition.add(token, postings[1])
+        partition = _Partition(_INDEXES_DIR / 'test_partition_retrieval',
+                               {token: postings})
 
         # Ensure postings are not duplicated.
         self.assertEqual(len(postings), len(partition.get(token)))
 
+        disk_postings = list(partition.get(token))
+
         # Ensure all added postings are retrieved.
         for posting in postings:
-            self.assertIn(posting, partition.get(token))
+            self.assertIn(posting, disk_postings)
 
-    def test_inverted_index_feedr(self):
+    def test_index_retrieval(self):
         """
-        Tests the use of feedr. Ensures that no unexpected behavior occurs.
+        Tests retrieval/iteration of all tokens in the index.
+        """
+        file = next(Path(SMALL_DATASET).glob('*.json'))
+        index = InvertedIndex(file)
+        expected_tokens = set(tokenize_JSON_file(file))
+
+        tokens = list(index)
+        self.assertEqual(len(expected_tokens), len(tokens))
+        for token in tokens:
+            self.assertIn(token, expected_tokens)
+
+    def test_inverted_index_construction(self):
+        """
+        Tests construction of an index. Ensures that no unexpected behavior occurs.
         """
         test_cases = [
-            ('developer/DEV/alderis_ics_uci_edu', 100, 'small_index'),
+            (SMALL_DATASET, 100, 'small_index'),
             # ('developer', 10 ** 6, 'large_index') # Takes long as hell
         ]
 
         for subset, max_postings, index_id in test_cases:
             with self.subTest(name = index_id):
                 with MemPoll() as _:
-                    index = InvertedIndex(index_id, max_in_memory_postings = max_postings)
-                    print(f'Constructing {index.__repr__()}')
+                    index = object.__new__(InvertedIndex)
+                    log_call(index._flush)
 
-                    log_call(index.flush)
+                    index.__init__(subset, index_id, max_in_memory_postings = max_postings)
 
-                    index.feedr(subset)
                     print_trunc(index)
 
                     # No token should have more postings than the number of pages.
@@ -131,34 +138,11 @@ class IndexTests(unittest.TestCase):
                             f'Token <{token}> has more postings than there are pages. '
                             f'This is impossible.')
 
-    def test_write_index_flush(self):
-        """
-        Tests that flushing to disk works as expected.
-        """
-        files = Path('../developer/DEV/alderis_ics_uci_edu').glob('*.json')
-
-        # No posting limit to allow manual flushing for this test.
-        index = InvertedIndex(max_in_memory_postings = 99999)
-        # Just add a single page to disk.
-        index.add(next(files))
-        index.flush()
-
-        # Check that the disk was created.
-        self.assertTrue(index.partition_dir.exists())
-        # Check that the in-memory index was cleared
-        self.assertTrue(not index._misc_partition._in_memory)
-
-        for disk in index.disk_partitions:
-            with open(disk, 'r') as f:
-                content = f.read()
-                print_trunc(content)
-
-                # Check that the file contents are of posting form (there are better ways to do
-                # this, principally schema validation but would be overkill).
-                for attr in fields(Posting):
-                    self.assertIn(f'"{attr.name}":', content)
-
     def test_flush_index_when_low_memory(self):
+        """
+        Tests that flushing to disk occurs if memory is low by setting an artificially high
+        threshold of 100%.
+        """
         # Flush to disk when <= 100% of mem (means it will flush on every addition).
         threshold = 1
         print(f'Threshold: {threshold * 100}%')
@@ -167,32 +151,30 @@ class IndexTests(unittest.TestCase):
         with MemPoll() as _:
             subset = 'developer/DEV/ugradforms_ics_uci_edu'
 
-            index = InvertedIndex(
+            index = object.__new__(InvertedIndex)
+            # Log when flushing occurs.
+            log_call(index._flush)
+
+            # Record if a flush happened.
+            flush_called = False
+
+            def set_called_flag():
+                nonlocal flush_called
+                flush_called = True
+
+            wrap(index._flush, after = set_called_flag)
+
+            index.__init__(
+                subset,
                 'flush_on_memory',
                 # Make sure no flushing occurs due to posting limits. Purely test memory limits.
                 max_in_memory_postings = 999999999,
                 min_avail_memory_perc = threshold
             )
 
-            # Log when flushing occurs.
-            log_call(index.flush)
-
-            # Record if a flush happened.
-            flush_called = False
-            def set_called_flag():
-                nonlocal flush_called
-                flush_called = True
-            wrap(index.flush, after = set_called_flag)
-
-            # Build index.
-            index.feedr(subset)
-
             # Flush should have been called at least once since we are violating memory threshold
             # (100%) every time.
             self.assertTrue(flush_called, 'InvertedIndex.flush was never called')
-
-    def test_index(self):
-        index = InvertedIndex2('../developer/DEV', max_in_memory_postings = 500)
 
 if __name__ == '__main__':
     unittest.main()
