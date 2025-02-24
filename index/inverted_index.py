@@ -387,6 +387,18 @@ class InvertedIndex:
         self._curr_in_memory_postings = 0
 
     def _merge_with_disk(self):
+        """
+        Merges the in-memory index with the index on disk, maintaining sorted order.
+        constant O(1) space complexity relative to the size of the index on disk as the disk files
+        are streamed line-by-line. As the index grows, the virtual memory consumed by this
+        method largely stays the same.
+
+        TODO: This fulfills the requirements of M1 to not load the entire index in memory, but it is
+        overkill and heavily increases the duration of the index build, which will be optimized by
+        M2.
+
+        TODO: Further optimizations: avoid JSON. Our file sizes are huge.
+        """
         temp_merged_file = self._partition_dir / 'temp_merged.json'
 
         with open(temp_merged_file, 'w') as out:
