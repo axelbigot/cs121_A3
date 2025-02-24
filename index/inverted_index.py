@@ -11,7 +11,7 @@ import psutil
 from typing_extensions import TextIO
 
 from index.JSONtokenizer import compute_word_frequencies, tokenize_JSON_file
-from index.url_mapper import URLMapper
+from index.path_mapper import PathMapper
 
 
 # The name of the entire A3 application.
@@ -227,7 +227,7 @@ class InvertedIndex:
         # In-memory portion of the index.
         self._in_memory: defaultdict[str, list[Posting]] = defaultdict(list)
         # URL-to-id mapper.
-        self._url_id_mapper = URLMapper(root_dir)
+        self._url_id_mapper = PathMapper(root_dir)
 
         # TODO: Hacky way of representing a merged index as a single partition. In the future,
         # TODO: this will be replaced by dedicated partitions.

@@ -1,4 +1,3 @@
-from inverted_index import InvertedIndex
 import os
 
 def generate_analysis(InvertedIndex) -> None:

@@ -1,8 +1,9 @@
-from index import InvertedIndex
+from index import InvertedIndex, generate_analysis
 
 
 def main():
-    index = InvertedIndex('developer/DEV/alderis_ics_uci_edu', max_in_memory_postings = 500)
+    index = InvertedIndex('developer')
+    generate_analysis(index)
 
 if __name__ == '__main__':
     main()
