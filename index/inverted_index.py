@@ -13,7 +13,8 @@ from typing import BinaryIO, Generator
 import platformdirs
 import psutil
 
-from index.JSONtokenizer import compute_word_frequencies, tokenize_JSON_file
+from index.JSONtokenizer import compute_word_frequencies, tokenize_JSON_file, \
+    tokenize_JSON_file_with_tags
 from index.path_mapper import PathMapper
 
 logger = logging.getLogger(__name__)
@@ -45,6 +46,9 @@ _INDEXES_DIR = _APP_DATA_DIR / 'indexes'
 # The default number of in-memory postings before writing to disk.
 # Generally, this also doubles as the max in-memory postings for any operation.
 _DEFAULT_POSTINGS_FLUSH_COUNT = 5e4
+
+_WEIGHTED_TAGS = ["h1", "h2", "h3", "title", "b", "strong"]
+
 
 class InvertedIndex:
     """
@@ -369,8 +373,11 @@ class InvertedIndex:
         """
         self._page_count += 1
         doc_id = self._mapper.get_id(str(page))
-        for token, frequency in compute_word_frequencies(tokenize_JSON_file(page)).items():
-            self._buf[token].append(Posting(doc_id = doc_id, frequency = frequency))
+        for token, tag_freqs in tokenize_JSON_file_with_tags(page, _WEIGHTED_TAGS).items():
+            self._buf[token].append(Posting(
+                doc_id = doc_id,
+                frequency = sum(tag_freqs.values()), # Kept for now for compatibility.
+                tag_frequencies = tag_freqs))
             self._postings_count += 1
 
             # Flush to disk if in-memory index grows too large.

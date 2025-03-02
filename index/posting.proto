@@ -5,6 +5,7 @@ syntax = "proto3";
 message Posting {
   uint32 doc_id = 1;
   uint32 frequency = 2;
+  map<string, uint32> tag_frequencies = 3;
 }
 
 message PostingList {

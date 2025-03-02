@@ -10,6 +10,8 @@ import psutil
 
 from JSONtokenizer import compute_word_frequencies, tokenize_JSON_file
 from index import InvertedIndex
+from index.inverted_index import _WEIGHTED_TAGS
+from index.JSONtokenizer import tokenize_JSON_file_with_tags
 from index.posting_pb2 import Posting
 from path_mapper import PathMapper
 
@@ -119,8 +121,11 @@ class IndexTests(unittest.TestCase):
         mapper = PathMapper(str(Path(datasource)))
         for p in Path(datasource).rglob('*.json'):
             doc_id = mapper.get_id(str(p))
-            for token, frequency in compute_word_frequencies(tokenize_JSON_file(str(p))).items():
-                in_memory_index[token].append(Posting(doc_id = doc_id, frequency = frequency))
+            for token, tag_freqs in tokenize_JSON_file_with_tags(str(p), _WEIGHTED_TAGS).items():
+                in_memory_index[token].append(Posting(
+                    doc_id = doc_id,
+                    frequency = sum(tag_freqs.values()),
+                    tag_frequencies = tag_freqs))
 
         self.assertEqual(sorted(in_memory_index.items()), list(index.items()))
 
@@ -141,9 +146,12 @@ class IndexTests(unittest.TestCase):
         mapper = PathMapper(str(Path(datasource)))
         for p in Path(datasource).rglob('*.json'):
             doc_id = mapper.get_id(str(p))
-            for token, frequency in compute_word_frequencies(tokenize_JSON_file(str(p))).items():
+            for token, tag_freqs in tokenize_JSON_file_with_tags(str(p), _WEIGHTED_TAGS).items():
                 if token == target_token:
-                    expected_postings.append(Posting(doc_id = doc_id, frequency = frequency))
+                    expected_postings.append(Posting(
+                        doc_id = doc_id,
+                        frequency = sum(tag_freqs.values()),
+                        tag_frequencies = tag_freqs))
 
         self.assertEqual(expected_postings, list(index[target_token]))
 
