@@ -24,7 +24,7 @@ current_dir = Path(__file__).resolve().parent
 proto_file = current_dir / 'posting.proto'
 logger.debug(f'Generating protobuf source classes for {proto_file}')
 result = subprocess.run(
-    ['protoc', f'--proto_path={current_dir}', '--python_out=.', proto_file],
+    ['protoc', f'--proto_path={current_dir}', f'--python_out={current_dir}', proto_file],
     capture_output = True, text = True)
 
 if result.returncode != 0:
