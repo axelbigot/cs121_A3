@@ -59,11 +59,14 @@ class InvertedIndex:
         time.
         persist: Whether NOT to delete the index's disk once its InvertedIndex object is garbage
         collected.
+        load_existing: Whether to load an existing inverted index from disk into this object, if
+        a matching index exists (by name).
     """
     def __init__(self, root_dir: str | Path, *,
                  name: str = '',
                  postings_flush_count: int = _DEFAULT_POSTINGS_FLUSH_COUNT,
-                 persist: bool = False):
+                 persist: bool = False,
+                 load_existing: bool = False):
         logger.debug('Initializing new InvertedIndex')
 
         self.postings_flush_count = postings_flush_count
@@ -86,19 +89,30 @@ class InvertedIndex:
         self._out_dir = _INDEXES_DIR / self._name # Location of this index on disk.
         self._merged_file = self._out_dir / f'merged.bin' # Location of the final merged index.
 
-        logger.debug(f'Starting construction of InvertedIndex {self.name}')
-        start = time.time()
+        # If conditions are right, build a new inverted index from scratch.
+        if not load_existing or not self._out_dir.exists():
+            if load_existing:
+                logger.debug(f'Looked for existing InvertedIndex {self.name} from disk to load, '
+                             f'but one was not found')
 
-        self.build() # Build the index. Periodically flushes to disk.
-        self.flush() # Flush any remaining in-memory data to disk.
+            logger.debug(f'Starting construction of new InvertedIndex {self.name}')
+            start = time.time()
 
-        logger.debug(f'Merging {self._partition_count} partitions for InvertedIndex {self.name}')
-        self._merge() # Merge partitions.
+            self.build() # Build the index. Periodically flushes to disk.
+            self.flush() # Flush any remaining in-memory data to disk.
 
-        mins, secs = divmod(time.time() - start, 60)
-        logger.debug(f'Finished construction of InvertedIndex {self.name} '
-                     f'in {f'{mins}m' if mins else ''}{round(secs, 2)}s. '
-                     f'It is now stable (read-access supported)')
+            logger.debug(f'Merging {self._partition_count} partitions for InvertedIndex {self.name}')
+            self._merge() # Merge partitions.
+
+            mins, secs = divmod(time.time() - start, 60)
+            logger.debug(f'Finished construction of new InvertedIndex {self.name} '
+                         f'in {f'{mins}m' if mins else ''}{round(secs, 2)}s. '
+                         f'It is now stable (read-access supported)')
+        else:
+            # Load an existing index from disk if available and requested.
+            self.load()
+            logger.debug(f'Loaded existing InvertedIndex {self.name} from disk. '
+                         f'This object now manages it.')
 
     def __del__(self):
         if not self.persist:
@@ -173,6 +187,17 @@ class InvertedIndex:
         for token, postings in self.items():
             if token == item:
                 return postings
+
+    def load(self):
+        """
+        Load an existing inverted index from disk into this object. Matches to a disk index by
+        name.
+        """
+        if not self._out_dir.exists():
+            return
+
+        for disk in self._out_dir.glob('*.bin'):
+            self._partitions.append(disk)
 
     def build(self):
         """

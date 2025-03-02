@@ -22,7 +22,8 @@ def main():
     index = InvertedIndex(
         'developer',
         name = 'index_main',
-        persist = True
+        persist = True,
+        load_existing = True
     )
     generate_analysis(index)
 
