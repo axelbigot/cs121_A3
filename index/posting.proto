@@ -1,0 +1,12 @@
+// Defines protobuf rules, used for efficient serialization and deserialization of index data.
+// Compiles to python source code using `protoc`. This is run automatically upon index creation.
+syntax = "proto3";
+
+message Posting {
+  uint32 doc_id = 1;
+  uint32 frequency = 2;
+}
+
+message PostingList {
+  repeated Posting postings = 1;
+}
