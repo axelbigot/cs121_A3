@@ -1,11 +1,19 @@
 import threading
 import time
 import unittest
+from collections import defaultdict
 from datetime import datetime
+from pathlib import Path
 from types import MethodType
 
-from index.inverted_index import _Partition, _INDEXES_DIR
-from index.inverted_index import *
+import psutil
+
+from JSONtokenizer import compute_word_frequencies, tokenize_JSON_file
+from index import InvertedIndex
+from index.inverted_index import _WEIGHTED_TAGS
+from index.JSONtokenizer import tokenize_JSON_file_with_tags
+from index.posting_pb2 import Posting
+from path_mapper import PathMapper
 
 
 SMALL_DATASET = '../developer/DEV/alderis_ics_uci_edu'
@@ -79,102 +87,73 @@ class MemPoll:
         self.stop.set()
 
 class IndexTests(unittest.TestCase):
-    def test_partition_retrieval(self):
+    def test_index_all_tokens_present(self):
         """
-        Tests retrieval of postings for a token in a partition.
+        Tests that all tokens are reflected and accessible from the inverted index.
         """
-        token = 'test'
-        postings = [Posting(doc_id = 0, frequency = 5), Posting(doc_id = 0, frequency = 4)]
+        datasource = SMALL_DATASET
+        index = InvertedIndex(
+            datasource,
+            name = 'test_index_all_tokens_present',
+            postings_flush_count = 500,
+            persist = True
+        )
 
-        partition = _Partition(_INDEXES_DIR / 'test_partition_retrieval',
-                               {token: postings})
+        expected_tokens = set()
+        for p in Path(datasource).rglob('*.json'):
+            expected_tokens.update(set(compute_word_frequencies(tokenize_JSON_file(str(p))).keys()))
 
-        # Ensure postings are not duplicated.
-        self.assertEqual(len(postings), len(partition.get(token)))
+        self.assertEqual(expected_tokens, set(index))
 
-        disk_postings = list(partition.get(token))
-
-        # Ensure all added postings are retrieved.
-        for posting in postings:
-            self.assertIn(posting, disk_postings)
-
-    def test_index_retrieval(self):
+    def test_index_all_postings_present(self):
         """
-        Tests retrieval/iteration of all tokens in the index.
+        Tests that all postings are accurately present in the inverted index, for each token.
         """
-        file = next(Path(SMALL_DATASET).glob('*.json'))
-        index = InvertedIndex(file)
-        expected_tokens = set(tokenize_JSON_file(file))
+        datasource = SMALL_DATASET
+        index = InvertedIndex(
+            datasource,
+            name = 'test_index_all_postings_present',
+            postings_flush_count = 500,
+            persist = True
+        )
 
-        tokens = list(index)
-        self.assertEqual(len(expected_tokens), len(tokens))
-        for token in tokens:
-            self.assertIn(token, expected_tokens)
+        in_memory_index: dict[str, list[Posting]] = defaultdict(list)
+        mapper = PathMapper(str(Path(datasource)))
+        for p in Path(datasource).rglob('*.json'):
+            doc_id = mapper.get_id(str(p))
+            for token, tag_freqs in tokenize_JSON_file_with_tags(str(p), _WEIGHTED_TAGS).items():
+                in_memory_index[token].append(Posting(
+                    doc_id = doc_id,
+                    frequency = sum(tag_freqs.values()),
+                    tag_frequencies = tag_freqs))
 
-    def test_inverted_index_construction(self):
+        self.assertEqual(sorted(in_memory_index.items()), list(index.items()))
+
+    def test_index_get_postings_by_token(self):
         """
-        Tests construction of an index. Ensures that no unexpected behavior occurs.
+        Tests that the postings of an individual token can be obtained.
         """
-        test_cases = [
-            (SMALL_DATASET, 100, 'small_index'),
-            # ('developer', 10 ** 6, 'large_index') # Takes long as hell
-        ]
+        datasource = SMALL_DATASET
+        index = InvertedIndex(
+            datasource,
+            name = 'test_index_get_postings_by_token',
+            postings_flush_count = 500,
+            persist = True
+        )
 
-        for subset, max_postings, index_id in test_cases:
-            with self.subTest(name = index_id):
-                with MemPoll() as _:
-                    index = object.__new__(InvertedIndex)
-                    log_call(index._flush)
+        target_token = 'alderis'
+        expected_postings: list[Posting] = []
+        mapper = PathMapper(str(Path(datasource)))
+        for p in Path(datasource).rglob('*.json'):
+            doc_id = mapper.get_id(str(p))
+            for token, tag_freqs in tokenize_JSON_file_with_tags(str(p), _WEIGHTED_TAGS).items():
+                if token == target_token:
+                    expected_postings.append(Posting(
+                        doc_id = doc_id,
+                        frequency = sum(tag_freqs.values()),
+                        tag_frequencies = tag_freqs))
 
-                    index.__init__(subset, index_id, max_in_memory_postings = max_postings)
-
-                    print_trunc(index)
-
-                    # No token should have more postings than the number of pages.
-                    page_count = sum((1 for _ in Path(subset).rglob('*.json')))
-                    for token in index:
-                        self.assertLessEqual(
-                            len(index[token]), page_count,
-                            f'Token <{token}> has more postings than there are pages. '
-                            f'This is impossible.')
-
-    def test_flush_index_when_low_memory(self):
-        """
-        Tests that flushing to disk occurs if memory is low by setting an artificially high
-        threshold of 100%.
-        """
-        # Flush to disk when <= 100% of mem (means it will flush on every addition).
-        threshold = 1
-        print(f'Threshold: {threshold * 100}%')
-
-        # Print available memory in the background.
-        with MemPoll() as _:
-            subset = 'developer/DEV/ugradforms_ics_uci_edu'
-
-            index = object.__new__(InvertedIndex)
-            # Log when flushing occurs.
-            log_call(index._flush)
-
-            # Record if a flush happened.
-            flush_called = False
-
-            def set_called_flag():
-                nonlocal flush_called
-                flush_called = True
-
-            wrap(index._flush, after = set_called_flag)
-
-            index.__init__(
-                subset,
-                'flush_on_memory',
-                # Make sure no flushing occurs due to posting limits. Purely test memory limits.
-                max_in_memory_postings = 999999999,
-                min_avail_memory_perc = threshold
-            )
-
-            # Flush should have been called at least once since we are violating memory threshold
-            # (100%) every time.
-            self.assertTrue(flush_called, 'InvertedIndex.flush was never called')
+        self.assertEqual(expected_postings, list(index[target_token]))
 
 if __name__ == '__main__':
     unittest.main()
