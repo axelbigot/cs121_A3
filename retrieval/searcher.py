@@ -1,3 +1,6 @@
+import sys
+sys.path.append('../index')
+
 from pathlib import Path
 
 from index.inverted_index import InvertedIndex, Posting
