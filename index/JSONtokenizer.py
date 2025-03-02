@@ -62,8 +62,7 @@ def tokenize_JSON_file_with_tags(path, explicit_tags):
         path: str - path to JSON file
         explicit_tags - list[str] - list of tags that should be explicitly defined in the frequency dict
     Returns:
-        generator: Generates list of tuples (token, dict[str, int]) where the index of the dict
-                    is the tag name and the value is the frequency of the tag
+        dict: index is lemmatized tokens and value is dict[str, int] where index is HTML tag and value is frequency
     """
     dict_tags = explicit_tags + ["other"]
     
@@ -71,7 +70,6 @@ def tokenize_JSON_file_with_tags(path, explicit_tags):
         obj = json.load(file) # convert json to dictionary
         soup = BeautifulSoup(obj['content'], 'html.parser')
         total_frequencies = compute_word_frequencies(Word(token).lemmatize() for token in tokenize(soup.get_text()))
-        result = []
 
         # lemmatized token = {tag_frequencies}
         tag_frequencies = dict()
@@ -102,6 +100,6 @@ def tokenize_JSON_file_with_tags(path, explicit_tags):
             other_frequency = total_frequency - total
             frequencies["other"] = other_frequency
 
-            result.append((token, frequencies))
+            tag_frequencies[token] = frequencies
             
-        return result
+        return tag_frequencies
