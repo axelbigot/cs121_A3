@@ -98,7 +98,8 @@ def tokenize_JSON_file_with_tags(path, explicit_tags):
                     total += frequency
 
             other_frequency = total_frequency - total
-            frequencies["other"] = other_frequency
+            # TODO: figure out why this is sometimes negative.
+            frequencies["other"] = max(other_frequency, 0)
 
             tag_frequencies[token] = frequencies
             
