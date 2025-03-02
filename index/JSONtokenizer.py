@@ -5,12 +5,11 @@ from textblob import Word
 
 def tokenize(string):
     """
-    Returns an array of all the tokens in the given file.
-    Runs in O(n) time where n is the number of words in the file. stop_words is a set
-    so looking if an element exists take O(1) time.
+    Returns an array of all the tokens in the given phrase.
+    Runs in O(n) time where n is the number of words in the phrase
 
     Args:
-        path(string): path to file
+       string: phrase to tokenize
 
     Returns:
         generator: generates list of tokens
@@ -54,3 +53,55 @@ def tokenize_JSON_file(path):
         soup = BeautifulSoup(obj['content'], 'html.parser')
         
         return (Word(token).lemmatize() for token in tokenize(soup.get_text()))
+
+def tokenize_JSON_file_with_tags(path, explicit_tags):
+    """
+    Tokenizes a JSON file but attaches the tag frequencies with each token.
+
+    Args:
+        path: str - path to JSON file
+        explicit_tags - list[str] - list of tags that should be explicitly defined in the frequency dict
+    Returns:
+        generator: Generates list of tuples (token, dict[str, int]) where the index of the dict
+                    is the tag name and the value is the frequency of the tag
+    """
+    dict_tags = explicit_tags + ["other"]
+    
+    with open(path, 'r') as file:
+        obj = json.load(file) # convert json to dictionary
+        soup = BeautifulSoup(obj['content'], 'html.parser')
+        total_frequencies = compute_word_frequencies(Word(token).lemmatize() for token in tokenize(soup.get_text()))
+        result = []
+
+        # lemmatized token = {tag_frequencies}
+        tag_frequencies = dict()
+
+        # explicit tags:
+        for tag in explicit_tags:
+            for soup_tag in soup.find_all(tag):
+                if soup_tag.string == None:
+                    continue
+                    
+                frequencies = compute_word_frequencies(Word(token).lemmatize() for token in tokenize(soup_tag.string))
+
+                for token, frequency in frequencies.items():
+                    frequency_dict = tag_frequencies.get(token, dict.fromkeys(dict_tags, 0))
+                    frequency_dict[tag] = frequency_dict.get(tag) + frequency
+                    
+                    tag_frequencies[token] = frequency_dict
+        
+        # miscellaneous
+        for token, total_frequency in total_frequencies.items():
+            frequencies = tag_frequencies.get(token) or dict.fromkeys(dict_tags, 0)
+
+            total = 0
+            if frequencies != None:
+                for frequency in frequencies.values():
+                    total += frequency
+
+            other_frequency = total_frequency - total
+            frequencies["other"] = other_frequency
+
+            result.append((token, frequencies))
+            
+        return result
