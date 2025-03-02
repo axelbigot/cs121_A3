@@ -4,7 +4,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from itertools import tee
 from pathlib import Path
-from typing import Generator
+from typing import Generator, Dict
 
 import platformdirs
 import psutil
@@ -25,6 +25,8 @@ _DEF_FLUSH_MEMORY_THRESHOLD = 0.5
 # Default number of postings in memory before the index should be flushed.
 _DEF_FLUSH_POSTINGS_THRESHOLD = 10 ** 6
 
+_WEIGHTED_TAGS = ["h1", "h2", "h3", "title", "b", "strong"]
+
 # Wipe the old indexes, if any.
 if _INDEXES_DIR.exists():
     shutil.rmtree(_INDEXES_DIR)
@@ -36,6 +38,11 @@ class Posting:
     """
     doc_id: int # ID of the document for this posting.
     frequency: int # Number of occurrences of this token in this document.
+
+    # Frequencies of important HTML tags (i.e h1-3, b, strong, title).
+    # index "other" is all the non-important tags.
+    tag_frequencies: Dict[str, int] 
+    
 
 class _Partition:
     """
@@ -334,9 +341,13 @@ class InvertedIndex:
         Args:
             json_path: Path to JSON document.
         """
-        for token, freq in compute_word_frequencies(tokenize_JSON_file(json_path)).items():
+        for token, tag_freq in tokenize_JSON_file_with_tags(json_path).items():
+            int total_freq = 0
+            for value in tag_freq.values():
+                total_freq += value
+
             # TODO: replace with real id once available.
-            self._in_memory[token].append(Posting(doc_id = 0, frequency = freq))
+            self._in_memory[token].append(Posting(doc_id = 0, frequency = total_freq, tag_frequencies = tag_freq))
             # Increment in-memory postings counter.
             self._curr_in_memory_postings += 1
 
