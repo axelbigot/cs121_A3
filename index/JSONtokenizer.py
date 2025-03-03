@@ -1,7 +1,15 @@
 import re
 import json
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, NavigableString, Comment, Declaration
 from textblob import Word
+
+def _ignore_nested_tags(element):
+    """
+    Takes an element from HTML and removes all nested tags
+    """
+    for string in element:
+        if isinstance(string, NavigableString) and not isinstance(string, Comment) and not isinstance(string, Declaration):
+            yield string
 
 def tokenize(string):
     """
@@ -69,7 +77,7 @@ def tokenize_JSON_file_with_tags(path, explicit_tags):
     with open(path, 'r') as file:
         obj = json.load(file) # convert json to dictionary
         soup = BeautifulSoup(obj['content'], 'html.parser')
-        total_frequencies = compute_word_frequencies(Word(token).lemmatize() for token in tokenize(soup.get_text()))
+        total_frequencies = compute_word_frequencies(Word(token).lemmatize() for token in tokenize(soup.get_text(" ")))
 
         # lemmatized token = {tag_frequencies}
         tag_frequencies = dict()
@@ -77,10 +85,11 @@ def tokenize_JSON_file_with_tags(path, explicit_tags):
         # explicit tags:
         for tag in explicit_tags:
             for soup_tag in soup.find_all(tag):
-                if soup_tag.string == None:
+                string = " ".join(_ignore_nested_tags(soup_tag))
+                if string == None:
                     continue
                     
-                frequencies = compute_word_frequencies(Word(token).lemmatize() for token in tokenize(soup_tag.string))
+                frequencies = compute_word_frequencies(Word(token).lemmatize() for token in tokenize(string))
 
                 for token, frequency in frequencies.items():
                     frequency_dict = tag_frequencies.get(token, dict.fromkeys(dict_tags, 0))
@@ -98,8 +107,10 @@ def tokenize_JSON_file_with_tags(path, explicit_tags):
                     total += frequency
 
             other_frequency = total_frequency - total
-            # TODO: figure out why this is sometimes negative.
-            frequencies["other"] = max(other_frequency, 0)
+            frequencies["other"] = other_frequency
+
+            if other_frequency < 0:
+                raise Exception(f'Negative other score: {path}, {token}, {frequencies}')
 
             tag_frequencies[token] = frequencies
             
