@@ -1,3 +1,4 @@
+from collections import defaultdict
 from pathlib import Path
 
 from index.inverted_index import InvertedIndex, Posting
@@ -10,10 +11,10 @@ class Searcher:
     Args:
         source_dir_path: Path to the index/searcher data source directory.
     """
-    def __init__(self, source_dir_path: str | Path):
+    def __init__(self, source_dir_path: str | Path, **kwargs):
         # The inverted index providing access to the data source.
-        self._index = InvertedIndex(source_dir_path)
-        self.path_mapper = PathMapper(source_dir_path)
+        self._index = InvertedIndex(source_dir_path, **kwargs)
+        self.path_mapper = self._index._mapper
 
     def search(self, query: str) -> list[str]:
         """
@@ -26,8 +27,8 @@ class Searcher:
             List of page urls ordered by relevance.
         """
         
-        query_tokens = query.lower().split()
-        doc_scores = {}
+        query_tokens = set(query.lower().split())
+        doc_scores: dict[int, dict[str, int]] = defaultdict(lambda: defaultdict(int))
         
         for token in query_tokens:
             token_docs = self._index[token]
@@ -36,18 +37,11 @@ class Searcher:
                 doc_id = posting.doc_id
                 count = posting.frequency
 
-                if doc_id in doc_scores:
-                    doc_scores[doc_id] += count
-                else:
-                    doc_scores[doc_id] = count
-        
+                doc_scores[doc_id][token] += count
+
         # filter documents to only include all query tokens
-        filtered_docs = {
-            doc : score 
-            for doc, score in doc_scores.items()
-            if all(any(p.doc_id == doc for p in self._index[token])
-            for token in query_tokens)
-        }
+        filtered_docs = {doc: sum(entries.values())
+                         for doc, entries in doc_scores.items() if entries.keys() == query_tokens}
 
         # sort documents by relevance score
         sorted_docs = sorted(filtered_docs.items(), key = lambda x : x[1], reverse = True)

@@ -4,6 +4,7 @@ import logging
 import pyfiglet
 
 from index import InvertedIndex, generate_analysis
+from retrieval import CLIApp
 
 
 parser = argparse.ArgumentParser(description = 'Main entry point for the A3 Search Engine')
@@ -16,16 +17,15 @@ logging.basicConfig(level = logging.DEBUG if args.debug else logging.INFO,
 logger = logging.getLogger(__name__)
 
 def main():
-    print(pyfiglet.figlet_format('CS121 A3 G98', font = 'slant'))
+    print(pyfiglet.figlet_format('CS121 A3 G100', font = 'slant'))
     logger.debug('Started Application in DEBUG mode')
 
-    index = InvertedIndex(
+    CLIApp(
         'developer',
         name = 'index_main',
         persist = True,
         load_existing = True
-    )
-    generate_analysis(index)
+    ).start()
 
 if __name__ == '__main__':
     main()
