@@ -107,7 +107,7 @@ def tokenize_JSON_file_with_tags(path, explicit_tags):
                     total += frequency
 
             other_frequency = total_frequency - total
-            frequencies["other"] = max(other_frequency, 0) # left in for security but isnt needed anymore
+            frequencies["other"] = other_frequency
 
             if other_frequency < 0:
                 raise Exception(f'Negative other score: {path}, {token}, {frequencies}')
