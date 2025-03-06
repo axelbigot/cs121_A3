@@ -5,6 +5,7 @@ import struct
 import subprocess
 import sys
 import time
+import json
 from collections import defaultdict
 from math import trunc
 from pathlib import Path
@@ -217,6 +218,12 @@ class InvertedIndex:
 
         # Add each page in the root dir.
         for page in self._root_dir.rglob('*.json'):
+            # This accesses the file on disk which is inefficient bc the tokenizer does that.
+            # We can move this logic to tokenizer which will improve runtime but increase coupling.
+            # Putting it here because we build the index only once
+            if _is_similar(page):
+                continue
+
             self._add_page(page)
 
     def flush(self):
@@ -389,25 +396,27 @@ class InvertedIndex:
                 self.flush()
                 self._buf.clear()
 
-    def _is_similar(string: str) -> bool:
+    def _is_similar(page: Path) -> bool:
     """
     Returns True if provided content is similar to another document.
 
     Args:
-        string: HTML of the document
+        page: Path to the json of a document
 
     Returns:
         bool: if the document is similar to another one
     """
-    hashed_doc = simhash(string)
-
-    if hashed_doc in self._simhashes:
-        return True
-
-    # TODO: with a big index, we may not be able to hold every single simhash in memory
-    for explored_hash in self._simhashes:
-        sim = calculate_similarity_score(hashed_doc, explored_hash)
-        if sim >= _SIMILARITY_THRESHOLD:
+    with open(page, 'r') as file:
+        html = json.load(file)['content']
+        hashed_doc = simhash(html)
+    
+        if hashed_doc in self._simhashes:
             return True
+    
+        # TODO: with a big index, we may not be able to hold every single simhash in memory
+        for explored_hash in self._simhashes:
+            sim = calculate_similarity_score(hashed_doc, explored_hash)
+            if sim >= _SIMILARITY_THRESHOLD:
+                return True
 
     return False
