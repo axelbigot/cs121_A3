@@ -16,6 +16,7 @@ import psutil
 from index.JSONtokenizer import compute_word_frequencies, tokenize_JSON_file, \
     tokenize_JSON_file_with_tags
 from index.path_mapper import PathMapper
+from simhash import simhash, calculate_similarity_score
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,7 @@ _INDEXES_DIR = _APP_DATA_DIR / 'indexes'
 _DEFAULT_POSTINGS_FLUSH_COUNT = 5e4
 
 _WEIGHTED_TAGS = ["h1", "h2", "h3", "title", "b", "strong"]
+_SIMILARITY_THRESHOLD = 0.95
 
 
 class InvertedIndex:
@@ -83,6 +85,7 @@ class InvertedIndex:
         self._partition_count = 0 # Current number of partitions.
         self._page_count = 0 # Total number of pages indexed.
         self._partitions: list[Path] = [] # Index partition files.
+        self._simhashes = set() # set of documents simhashes
 
         self._name = name
 
@@ -385,3 +388,26 @@ class InvertedIndex:
                 self._postings_count = 0
                 self.flush()
                 self._buf.clear()
+
+    def _is_similar(string: str) -> bool:
+    """
+    Returns True if provided content is similar to another document.
+
+    Args:
+        string: HTML of the document
+
+    Returns:
+        bool: if the document is similar to another one
+    """
+    hashed_doc = simhash(string)
+
+    if hashed_doc in self._simhashes:
+        return True
+
+    # TODO: with a big index, we may not be able to hold every single simhash in memory
+    for explored_hash in self._simhashes:
+        sim = calculate_similarity_score(hashed_doc, explored_hash)
+        if sim >= _SIMILARITY_THRESHOLD:
+            return True
+
+    return False
