@@ -1,8 +1,10 @@
 from collections import defaultdict
 from pathlib import Path
+import math
 
 from index.inverted_index import InvertedIndex, Posting
 from index.path_mapper import PathMapper
+from index.JSONtokenizer import compute_word_frequencies, tokenize
 
 class Searcher:
     """
@@ -15,6 +17,28 @@ class Searcher:
         # The inverted index providing access to the data source.
         self._index = InvertedIndex(source_dir_path, **kwargs)
         self.path_mapper = self._index._mapper
+
+    def _cosine_similarity(query: str, document_text: str):
+        """
+        Calculate the cosine similarity between a query and a document. The document
+        should not include the HTML tags (i.e use soup.get_text()). 1 is similar, 0 is completely different
+
+        Args:
+            query: search query
+            document_text: text portion of a document
+
+        Returns:
+            A number representing the cosine of the angle between the 2 strings in vector space.
+        """
+        # calculate vectors for both strings (vector = word frequencies)
+        query_vector = compute_word_frequencies(tokenize(query))
+        document_vector = compute_word_frequencies(tokenize(document_text))
+        
+        # calculate cosine
+        numerator = sum(query_vector.get(word, 0) * document_vector.get(word, 0) for word in set(query_vector.keys() + document_vector.keys()))
+        denominator = math.sqrt(sum(frequency ** 2 for frequency in query_vector.values()) * sum(frequency ** 2 for frequency in document_vector.values()))
+
+        return numerator / denominator
 
     def search(self, query: str) -> list[str]:
         """
