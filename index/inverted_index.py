@@ -17,7 +17,7 @@ import psutil
 from index.JSONtokenizer import compute_word_frequencies, tokenize_JSON_file, \
     tokenize_JSON_file_with_tags
 from index.path_mapper import PathMapper
-from simhash import simhash, calculate_similarity_score
+from index._simhash import simhash, calculate_similarity_score
 
 logger = logging.getLogger(__name__)
 
@@ -397,26 +397,26 @@ class InvertedIndex:
                 self._buf.clear()
 
     def _is_similar(page: Path) -> bool:
-    """
-    Returns True if provided content is similar to another document.
-
-    Args:
-        page: Path to the json of a document
-
-    Returns:
-        bool: if the document is similar to another one
-    """
-    with open(page, 'r') as file:
-        html = json.load(file)['content']
-        hashed_doc = simhash(html)
+        """
+        Returns True if provided content is similar to another document.
     
-        if hashed_doc in self._simhashes:
-            return True
+        Args:
+            page: Path to the json of a document
     
-        # TODO: with a big index, we may not be able to hold every single simhash in memory
-        for explored_hash in self._simhashes:
-            sim = calculate_similarity_score(hashed_doc, explored_hash)
-            if sim >= _SIMILARITY_THRESHOLD:
+        Returns:
+            bool: if the document is similar to another one
+        """
+        with open(page, 'r') as file:
+            html = json.load(file)['content']
+            hashed_doc = simhash(html)
+        
+            if hashed_doc in self._simhashes:
                 return True
-
-    return False
+        
+            # TODO: with a big index, we may not be able to hold every single simhash in memory
+            for explored_hash in self._simhashes:
+                sim = calculate_similarity_score(hashed_doc, explored_hash)
+                if sim >= _SIMILARITY_THRESHOLD:
+                    return True
+    
+        return False

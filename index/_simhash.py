@@ -1,5 +1,6 @@
-from JSONTokenizer import tokenize, compute_word_frequencies
 import math
+
+from index.JSONtokenizer import tokenize, compute_word_frequencies
 
 def _leftRotate(x, amount):
     """
@@ -159,13 +160,13 @@ def distance(hash1, hash2):
     return sum(bin(a ^ b).count('1') for a, b in zip(hash1, hash2))
 
 def calculate_similarity_score(hash1, hash2):
-     """
+    """
     Calculates percentage of bits that are the same between 2 sim hashes. They should be identical in length (i.e amount of bytes)
-
+    
     Arguments:
         hash1: bytes - hash from simhash
         hash2: bytes - hash from simhash
-
+    
     Returns:
         count: int
     """
