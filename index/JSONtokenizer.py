@@ -58,9 +58,13 @@ def tokenize_JSON_file(path):
     """
     with open(path, 'r') as file:
         obj = json.load(file) # convert json to dictionary
-        soup = BeautifulSoup(obj['content'], 'html.parser')
+
+        try:
+            soup = BeautifulSoup(obj['content'], 'lxml')
         
-        return (Word(token).lemmatize() for token in tokenize(soup.get_text()))
+            return (Word(token).lemmatize() for token in tokenize(soup.get_text()))
+        except Exception as e:
+            print(f'Error processing HTML: {e}')
 
 def tokenize_JSON_file_with_tags(path, explicit_tags):
     """
@@ -76,7 +80,10 @@ def tokenize_JSON_file_with_tags(path, explicit_tags):
     
     with open(path, 'r') as file:
         obj = json.load(file) # convert json to dictionary
-        soup = BeautifulSoup(obj['content'], 'html.parser')
+        try:
+            soup = BeautifulSoup(obj['content'], 'lxml')
+        except Exception as e:
+            print(f'Error processing HTML: {e}')
         total_frequencies = compute_word_frequencies(Word(token).lemmatize() for token in tokenize(soup.get_text(" ")))
 
         # lemmatized token = {tag_frequencies}
