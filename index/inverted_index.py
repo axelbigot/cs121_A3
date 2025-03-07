@@ -6,15 +6,13 @@ import subprocess
 import sys
 import time
 from collections import defaultdict
-from math import trunc
 from pathlib import Path
 from typing import BinaryIO, Generator
 
-import platformdirs
 import psutil
 
-from index.JSONtokenizer import compute_word_frequencies, tokenize_JSON_file, \
-    tokenize_JSON_file_with_tags
+from index.JSONtokenizer import tokenize_JSON_file_with_tags
+from index.defs import APP_DATA_DIR
 from index.path_mapper import PathMapper
 
 logger = logging.getLogger(__name__)
@@ -37,11 +35,7 @@ logger.debug('Successfully generated protobuf source classes')
 # the script.
 from index.posting_pb2 import Posting, PostingList
 
-# The name of the entire A3 application.
-_APP_NAME = 'CS121_A3'
-# Local data dir for this application.
-_APP_DATA_DIR = Path(platformdirs.user_data_dir(_APP_NAME))
-_INDEXES_DIR = _APP_DATA_DIR / 'indexes'
+_INDEXES_DIR = APP_DATA_DIR / 'indexes'
 
 # The default number of in-memory postings before writing to disk.
 # Generally, this also doubles as the max in-memory postings for any operation.
@@ -78,7 +72,7 @@ class InvertedIndex:
 
         self._root_dir = Path(root_dir)
         self._buf: dict[str, list[Posting]] = defaultdict(list) # In-memory portion of the index.
-        self._mapper = PathMapper(str(self._root_dir)) # Used get ids for pages.
+        self._mapper = PathMapper(str(self._root_dir), rebuild = not load_existing) # Doc ids.
         self._postings_count = 0 # Current in-memory posting count.
         self._partition_count = 0 # Current number of partitions.
         self._page_count = 0 # Total number of pages indexed.

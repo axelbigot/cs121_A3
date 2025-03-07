@@ -1,5 +1,14 @@
+import logging
 import os
 import json
+import re
+
+from index.defs import APP_DATA_DIR
+
+
+_MAPPER_DIR = APP_DATA_DIR / 'mappers'
+
+logger = logging.getLogger(__name__)
 
 class PathMapper:
     """
@@ -7,18 +16,26 @@ class PathMapper:
     file path a unique ID starting from 1 and incrementing
     """
 
-    def __init__(self, root_path : str):
+    def __init__(self, root_path : str, *, rebuild = False):
         """
         Initializes the PathMapper with the dictionary containing JSON files
         Maps Path-to-ID and URL-to-ID
 
         :param doc_path: Path to the directory containing JSON files
         """
-
         self.root_path = root_path
-        self.path_to_id, self.url_to_id = self.construct_mapping()
+
+        name = re.sub(r'[<>:"/\\|?*]', '_', self.root_path)
+        self._mapper_disk_path = _MAPPER_DIR / name
+
+        self.path_to_id, self.url_to_id = ({}, {})
+
+        if rebuild or not self._load():
+            logger.debug(f'Building PathMapper from scratch')
+            self.construct_mapping()
+            self._save()
     
-    def construct_mapping(self) -> dict[str, int]:
+    def construct_mapping(self):
         """
         Reads all JSON files in subdirectories of the root 
         directory and assigns each a unique ID
@@ -26,9 +43,6 @@ class PathMapper:
         :param: None
         :return: Dictionary mapping file paths to unique IDs
         """
-
-        path_to_id = {}
-        url_to_id = {}
         file_id = 1
 
         # walk through all subdirectories and files
@@ -37,7 +51,7 @@ class PathMapper:
                 if file_name.endswith(".json"):
                     file_path = os.path.join(subdir, file_name)
 
-                    path_to_id[file_path] = file_id
+                    self.path_to_id[file_path] = file_id
 
                     # attempt to extract URL from JSON
                     try:
@@ -45,14 +59,12 @@ class PathMapper:
                             data = json.load(f)
                             url = data.get("url")
 
-                            if url and url not in url_to_id:
-                                url_to_id[url] = file_id
+                            if url and url not in self.url_to_id:
+                                self.url_to_id[url] = file_id
                     except json.JSONDecodeError:
                         print("WARNING: " + str(file_name) + " is not a valid JSON file")
                     
                     file_id += 1
-
-        return path_to_id, url_to_id
     
     def get_id(self, file_path : str) -> int:
         """
@@ -83,3 +95,40 @@ class PathMapper:
         """
 
         return next((url for url, id in self.url_to_id.items() if id == doc_id), "")
+
+    def _save(self):
+        """
+        Saves the mapper to disk, so it does not need to be rebuilt for later runs.
+        """
+        data = {
+            'path_to_id': self.path_to_id,
+            'url_to_id': self.url_to_id
+        }
+
+        self._mapper_disk_path.parent.mkdir(parents=True, exist_ok=True)
+
+        with open(self._mapper_disk_path, 'w') as f:
+            json.dump(data, f)
+
+        logger.debug(f'Saved PathMapper to {self._mapper_disk_path}')
+
+    def _load(self) -> bool:
+        """
+        Load the path mapper from disk, if it already exists.
+
+        Returns:
+            True if loading succeeded, false otherwise.
+        """
+        if not self._mapper_disk_path.exists():
+            logger.debug(f'Count not find existing PathMapper')
+            return False
+
+        logger.debug(f'Loading PathMapper from {self._mapper_disk_path}')
+
+        with open(self._mapper_disk_path, 'r') as f:
+            data = json.load(f)
+
+        self.path_to_id = data["path_to_id"]
+        self.url_to_id = data["url_to_id"]
+
+        return True
