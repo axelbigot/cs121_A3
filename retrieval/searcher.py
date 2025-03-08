@@ -2,7 +2,6 @@ from collections import defaultdict
 from pathlib import Path
 import math
 
-from nltk.corpus import wordnet
 from nltk.stem import PorterStemmer
 from spellchecker import SpellChecker
 from textblob import Word
@@ -22,6 +21,7 @@ class Searcher:
         # The inverted index providing access to the data source.
         self._index = InvertedIndex(source_dir_path, **kwargs)
         self.path_mapper = self._index._mapper
+        self.spellchecker = SpellChecker()
 
     def _process_query(self, query: str) -> set[str]:
         """
@@ -36,14 +36,12 @@ class Searcher:
         Returns:
             A set of processed query tokens.
         """
-        # Initialize spell checker
-        spell = SpellChecker()
 
         # Normalize and tokenize
         tokens = query.lower().split()
 
         # Correct spelling errors
-        corrected_tokens = {spell.correction(token) or token for token in tokens}
+        corrected_tokens = {self.spellchecker.correction(token) or token for token in tokens}
 
         # Lemmatize tokens
         lemmatized_tokens = {Word(token).lemmatize() for token in corrected_tokens}
