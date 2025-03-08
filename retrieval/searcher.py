@@ -45,17 +45,10 @@ class Searcher:
         
         # Lemmatize tokens
         lemmatized_tokens = {Word(token).lemmatize() for token in corrected_tokens}
-        
-        # Expand with synonyms from WordNet
-        synonym_tokens = set()
-        for token in lemmatized_tokens:
-            for syn in wordnet.synsets(token):
-                for lemma in syn.lemmas():
-                    synonym_tokens.add(lemma.name().replace('_', ' '))  # Handle multi-word synonyms
 
         # Combine all variations
-        expanded_tokens = lemmatized_tokens.union(synonym_tokens, corrected_tokens)
-
+        expanded_tokens = lemmatized_tokens.union(corrected_tokens)
+        print(expanded_tokens)
         return expanded_tokens
 
     def search(self, query: str) -> list[str]:
