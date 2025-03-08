@@ -34,7 +34,7 @@ logger.debug('Successfully generated protobuf source classes')
 # These may have error squiggles, but these will resolve correctly at runtime.
 # Dynamically generated classes and module from the above script. Import must be placed after
 # the script.
-from index.posting_pb2 import Posting, PostingList
+from index.posting_pb2 import Posting, TokenEntry
 
 _INDEXES_DIR = APP_DATA_DIR / 'indexes'
 
@@ -81,7 +81,7 @@ class InvertedIndex:
         self.persist = persist
 
         self._root_dir = Path(root_dir) # Source dir for this index's pages.
-        self._buf: dict[str, list[Posting]] = defaultdict(list) # In-memory portion of the index.
+        self._buf: dict[str, TokenEntry] = defaultdict(TokenEntry) # In-memory portion of the index.
         self._mapper = PathMapper(str(self._root_dir), rebuild = not load_existing) # Doc ids.
         self._postings_count = 0 # Current in-memory posting count.
         self._partition_count = 0 # Current number of partitions.
@@ -160,7 +160,7 @@ class InvertedIndex:
         """
         return self._page_count
 
-    def items(self) -> Generator[tuple[str, list[Posting]], None, None]:
+    def items(self) -> Generator[tuple[str, TokenEntry], None, None]:
         """
         Get dict-style items for the tokens and postings contained in this index's disk.
 
@@ -185,7 +185,7 @@ class InvertedIndex:
         """
         yield from map(lambda item: item[0], self.items())
 
-    def __getitem__(self, item: str) -> list[Posting]:
+    def __getitem__(self, item: str) -> TokenEntry:
         """
         Get the postings associated with a token on disk.
 
@@ -202,7 +202,7 @@ class InvertedIndex:
             if token == item:
                 return postings
 
-        return []
+        return TokenEntry()
 
     def load(self):
         """
@@ -253,8 +253,8 @@ class InvertedIndex:
         # First pass of the partition files - init the min heap with their first tokens.
         for i, stream in enumerate(f_streams):
             try:
-                token, posting_list = self._next_entry(stream)
-                heapq.heappush(pq, (token, i, posting_list)) # O(log N), N = heap items count.
+                token, token_entry = self._next_entry(stream)
+                heapq.heappush(pq, (token, i, token_entry)) # O(log N), N = heap items count.
             except StopIteration:
                 pass
 
@@ -262,22 +262,23 @@ class InvertedIndex:
         batch: list[tuple] = [] # Current in-memory merged segment, written in batches.
 
         while pq: # Iterate until nothing left in token queue.
-            token, idx, posting_list = heapq.heappop(pq) # Get the next (smallest) token entry for
+            token, idx, token_entry = heapq.heappop(pq) # Get the next (smallest) token entry for
                                                          # merging. O(log N), N = heap items count.
             if last_token == token:
                 # Same token in two partitions - merge their postings.
                 # Protobuf's MergeFrom() is O(N) for repeated fields (such as posting list), N =
                 # number of repeated fields.
-                batch[-1][1].MergeFrom(posting_list)
+                batch[-1][1].df += token_entry.df
+                batch[-1][1].MergeFrom(token_entry)
             else:
                 # New token - append it to the batch.
-                batch.append((token, posting_list))
+                batch.append((token, token_entry))
                 last_token = token # New token = new latest token.
 
             try:
                 # Push the next token and postings to be added from this partition to the min heap.
-                next_token, next_posting_list = self._next_entry(f_streams[idx])
-                heapq.heappush(pq, (next_token, idx, next_posting_list))
+                next_token, next_token_entry = self._next_entry(f_streams[idx])
+                heapq.heappush(pq, (next_token, idx, next_token_entry))
             except StopIteration:
                 pass
 
@@ -285,12 +286,12 @@ class InvertedIndex:
             # Write the batch to disk if it exceeds the in-memory postings limit.
             if len(batch) >= self.postings_flush_count:
                 # Map it to a dict of helper function typing consistency.
-                d: dict[str, list[Posting]] = {}
-                for token, posting_list in batch:
+                d: dict[str, TokenEntry] = {}
+                for token, token_entry in batch:
                     if token == last_token:
-                        new_batch.append((token, posting_list))
+                        new_batch.append((token, token_entry))
                     else:
-                        d[token] = list(posting_list)
+                        d[token] = token_entry
                 batch.clear()
                 batch.extend(new_batch)
 
@@ -299,9 +300,9 @@ class InvertedIndex:
 
         # Write any residual data to disk (final batch).
         if batch:
-            d: dict[str, list[Posting]] = {}
-            for token, posting_list in batch:
-                d[token] = list(posting_list)
+            d: dict[str, TokenEntry] = {}
+            for token, token_entry in batch:
+                d[token] = token_entry
             batch.clear()
             self._flush_idx_data(self._merged_file, d)
 
@@ -317,7 +318,7 @@ class InvertedIndex:
         self._partitions = [self._merged_file]
         self._partition_count = 0
 
-    def _flush_idx_data(self, disk: Path, data: dict[str, list[Posting]]):
+    def _flush_idx_data(self, disk: Path, data: dict[str, TokenEntry]):
         """
         Flush arbitrary inverted index data to disk.
 
@@ -329,10 +330,10 @@ class InvertedIndex:
         logger.debug(f'{psutil.virtual_memory().percent}% virtual memory currently used')
 
         with open(disk, 'ab+') as f:
-            for token, postings in sorted(data.items()):
+            for token, token_entry in sorted(data.items()):
                 # Map to protobuf types and serialize.
-                posting_list = PostingList(postings = postings)
-                postings_data = posting_list.SerializeToString()
+                entry = TokenEntry(df = token_entry.df, postings = token_entry.postings)
+                entry_data = entry.SerializeToString()
 
                 # Write the length of the token. Needed to efficiently stream data token-by-token.
                 # We need to know where one token entry ends and another starts; these are variable.
@@ -340,9 +341,9 @@ class InvertedIndex:
                 # Write the token.
                 f.write(token.encode('utf-8'))
                 # Write the size of the postings.
-                f.write(struct.pack('I', len(postings_data)))
+                f.write(struct.pack('I', len(entry_data)))
                 # Write the serialized postings.
-                f.write(postings_data)
+                f.write(entry_data)
 
         data.clear()
 
@@ -359,9 +360,9 @@ class InvertedIndex:
                     # Appends tokens to the in-memory buffer while under the partition size
                     # threshold.
                     while self._postings_count < self.partition_posting_size:
-                        token, postings = self._next_entry(f)
-                        self._buf[token] = postings
-                        self._postings_count += len(postings)
+                        token, token_entry = self._next_entry(f)
+                        self._buf[token] = token_entry
+                        self._postings_count += len(token_entry.postings)
                 except StopIteration:
                     # No more entries.
                     break
@@ -411,7 +412,7 @@ class InvertedIndex:
                 except StopIteration:
                     break
 
-    def _next_entry(self, f: BinaryIO) -> tuple[str, list[Posting]]:
+    def _next_entry(self, f: BinaryIO) -> tuple[str, TokenEntry]:
         """
         Get the next token-postings entry in an opened binary file.
 
@@ -429,14 +430,14 @@ class InvertedIndex:
             token_length = struct.unpack('I', length_bytes)[0] # Decode token length.
             token = f.read(token_length).decode('utf-8') # Decode token.
 
-            posting_length = struct.unpack('I', f.read(4))[0] # Decode posting list length.
-            postings = f.read(posting_length) # Decode posting list.
+            token_entry_length = struct.unpack('I', f.read(4))[0] # Decode posting list length.
+            token_entry_data = f.read(token_entry_length) # Decode posting list.
 
             # Deserialize postings to protobuf types.
-            posting_list = PostingList()
-            posting_list.ParseFromString(postings)
+            token_entry = TokenEntry()
+            token_entry.ParseFromString(token_entry_data)
 
-            return token, posting_list.postings
+            return token, token_entry
         except:
             # If something goes wrong, can't reliably parse the file further.
             raise StopIteration
@@ -451,10 +452,11 @@ class InvertedIndex:
         self._page_count += 1
         doc_id = self._mapper.get_id(str(page))
         for token, tag_freqs in tokenize_JSON_file_with_tags(page, _WEIGHTED_TAGS).items():
-            self._buf[token].append(Posting(
+            self._buf[token].postings.append(Posting(
                 doc_id = doc_id,
                 frequency = sum(tag_freqs.values()), # Kept for now for compatibility.
                 tag_frequencies = tag_freqs))
+            self._buf[token].df += 1
             self._postings_count += 1
 
             # Flush to disk if in-memory index grows too large.

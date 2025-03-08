@@ -136,3 +136,14 @@ class PathMapper:
         self.url_to_id = data["url_to_id"]
 
         return True
+
+
+    def get_path_by_id(self, doc_id: int) -> str:
+        """
+        Retrieves the PATH for a given document ID
+        
+        :param doc_id: Document ID to look up in dictionary
+        :return: PATH if found, else an empty string
+        """
+
+        return next((path for path, id in self.path_to_id.items() if id == doc_id), "")
