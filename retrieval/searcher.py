@@ -57,6 +57,7 @@ class Searcher:
         for token in query_tokens:
             token_docs = self._index[token].postings
             token_df = self._index[token].df
+            print(token, token_df)
 
             for posting in token_docs:
                 doc_id = posting.doc_id

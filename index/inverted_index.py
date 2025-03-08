@@ -241,8 +241,8 @@ class InvertedIndex:
         # First pass of the partition files - init the min heap with their first tokens.
         for i, stream in enumerate(f_streams):
             try:
-                token, posting_list = self._next_entry(stream)
-                heapq.heappush(pq, (token, i, posting_list)) # O(log N), N = heap items count.
+                token, token_entry = self._next_entry(stream)
+                heapq.heappush(pq, (token, i, token_entry)) # O(log N), N = heap items count.
             except StopIteration:
                 pass
 
@@ -250,22 +250,23 @@ class InvertedIndex:
         batch: list[tuple] = [] # Current in-memory merged segment, written in batches.
 
         while pq: # Iterate until nothing left in token queue.
-            token, idx, posting_list = heapq.heappop(pq) # Get the next (smallest) token entry for
+            token, idx, token_entry = heapq.heappop(pq) # Get the next (smallest) token entry for
                                                          # merging. O(log N), N = heap items count.
             if last_token == token:
                 # Same token in two partitions - merge their postings.
                 # Protobuf's MergeFrom() is O(N) for repeated fields (such as posting list), N =
                 # number of repeated fields.
-                batch[-1][1].MergeFrom(posting_list)
+                batch[-1][1].df += token_entry.df
+                batch[-1][1].MergeFrom(token_entry)
             else:
                 # New token - append it to the batch.
-                batch.append((token, posting_list))
+                batch.append((token, token_entry))
                 last_token = token # New token = new latest token.
 
             try:
                 # Push the next token and postings to be added from this partition to the min heap.
-                next_token, next_posting_list = self._next_entry(f_streams[idx])
-                heapq.heappush(pq, (next_token, idx, next_posting_list))
+                next_token, next_token_entry = self._next_entry(f_streams[idx])
+                heapq.heappush(pq, (next_token, idx, next_token_entry))
             except StopIteration:
                 pass
 
