@@ -202,7 +202,7 @@ class InvertedIndex:
             if token == item:
                 return postings
 
-        return []
+        return TokenEntry()
 
     def load(self):
         """
@@ -360,9 +360,9 @@ class InvertedIndex:
                     # Appends tokens to the in-memory buffer while under the partition size
                     # threshold.
                     while self._postings_count < self.partition_posting_size:
-                        token, postings = self._next_entry(f)
-                        self._buf[token] = postings
-                        self._postings_count += len(postings)
+                        token, token_entry = self._next_entry(f)
+                        self._buf[token] = token_entry
+                        self._postings_count += len(token_entry.postings)
                 except StopIteration:
                     # No more entries.
                     break
