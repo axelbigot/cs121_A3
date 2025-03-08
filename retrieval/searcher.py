@@ -2,6 +2,10 @@ from collections import defaultdict
 from pathlib import Path
 import math
 
+from nltk.stem import PorterStemmer
+from spellchecker import SpellChecker
+from textblob import Word
+
 from index.inverted_index import InvertedIndex, Posting
 from index.path_mapper import PathMapper
 from index.JSONtokenizer import compute_word_frequencies, tokenize, get_content_from_JSON
@@ -21,6 +25,35 @@ class Searcher:
         # The inverted index providing access to the data source.
         self._index = InvertedIndex(source_dir_path, **kwargs)
         self.path_mapper = self._index._mapper
+        self.spellchecker = SpellChecker()
+
+    def _process_query(self, query: str) -> set[str]:
+        """
+        Processes the query by normalizing, tokenizing, lemmatizing, expanding terms,
+        and correcting spelling errors.
+
+        Expands terms using synonyms from WordNet and stemming.
+
+        Args:
+            query: String search query.
+
+        Returns:
+            A set of processed query tokens.
+        """
+
+        # Normalize and tokenize
+        tokens = query.lower().split()
+
+        # Correct spelling errors
+        corrected_tokens = {self.spellchecker.correction(token) or token for token in tokens}
+
+        # Lemmatize tokens
+        lemmatized_tokens = {Word(token).lemmatize() for token in corrected_tokens}
+
+        # Combine all variations
+        expanded_tokens = lemmatized_tokens.union(corrected_tokens)
+        print(expanded_tokens)
+        return expanded_tokens
 
     def _cosine_similarity(self, query: str, document_text: str):
         """
@@ -37,7 +70,29 @@ class Searcher:
         # calculate vectors for both strings (vector = word frequencies)
         query_vector = compute_word_frequencies(tokenize(query))
         document_vector = compute_word_frequencies(tokenize(document_text))
-        
+
+        # calculate cosine
+        numerator = sum(query_vector.get(word, 0) * document_vector.get(word, 0) for word in set(list(query_vector.keys()) + list(document_vector.keys())))
+        denominator = math.sqrt(sum(frequency ** 2 for frequency in query_vector.values()) * sum(frequency ** 2 for frequency in document_vector.values()))
+
+        return numerator / denominator
+
+    def _cosine_similarity(self, query: str, document_text: str):
+        """
+        Calculate the cosine similarity between a query and a document. The document
+        should not include the HTML tags (i.e use soup.get_text()). 1 is similar, 0 is completely different
+
+        Args:
+            query: search query
+            document_text: text portion of a document
+
+        Returns:
+            A number representing the cosine of the angle between the 2 strings in vector space.
+        """
+        # calculate vectors for both strings (vector = word frequencies)
+        query_vector = compute_word_frequencies(tokenize(query))
+        document_vector = compute_word_frequencies(tokenize(document_text))
+
         # calculate cosine
         numerator = sum(query_vector.get(word, 0) * document_vector.get(word, 0) for word in set(list(query_vector.keys()) + list(document_vector.keys())))
         denominator = math.sqrt(sum(frequency ** 2 for frequency in query_vector.values()) * sum(frequency ** 2 for frequency in document_vector.values()))
@@ -55,7 +110,7 @@ class Searcher:
             List of page urls ordered by relevance.
         """
         
-        query_tokens = set(query.lower().split())
+        query_tokens = self._process_query(query)
         doc_scores: dict[int, dict[str, int]] = defaultdict(lambda: defaultdict(int))
         
         for token in query_tokens:
@@ -98,5 +153,3 @@ class Searcher:
         ]
         
         return result_urls
-
-
