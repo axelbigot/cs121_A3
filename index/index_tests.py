@@ -1,3 +1,6 @@
+import cProfile
+import pstats
+import shutil
 import threading
 import time
 import unittest
@@ -5,6 +8,7 @@ from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 from types import MethodType
+from unittest.mock import patch
 
 import psutil
 
@@ -14,6 +18,7 @@ from index.inverted_index import _WEIGHTED_TAGS
 from index.JSONtokenizer import tokenize_JSON_file_with_tags
 from index.posting_pb2 import Posting
 from path_mapper import PathMapper
+from retrieval import CLIApp
 
 
 SMALL_DATASET = '../developer/DEV/alderis_ics_uci_edu'
@@ -154,6 +159,36 @@ class IndexTests(unittest.TestCase):
                         tag_frequencies = tag_freqs))
 
         self.assertEqual(expected_postings, list(index[target_token]))
+
+    @patch('builtins.input', side_effect=[
+        'alderis', 'brain cat dog', 'the', 'zhu', 'a', 'master of software engineering',
+        'uci', 'ics', 'irvine', 'exit']
+    )
+    def test_index_performance(self, _):
+        profiler = cProfile.Profile()
+        profiler.enable()
+
+        try:
+            CLIApp(
+                '../developer',
+                name = 'index_main',
+                load_existing = True,
+                persist = True
+            ).start()
+        except SystemExit:
+            pass
+
+        profiler.disable()
+
+        stats = pstats.Stats(profiler)
+        stats.strip_dirs().sort_stats('tottime').print_stats(20)
+
+        stats_dir = Path('../build/stats/test_index_performance')
+        shutil.rmtree(stats_dir, ignore_errors=True)
+        stats_dir.mkdir(exist_ok = True, parents = True)
+
+        profiler.dump_stats(stats_dir / f'profile_{datetime.now()
+                            .strftime("%m-%d_%H-%M-%S")}.prof')
 
 if __name__ == '__main__':
     unittest.main()

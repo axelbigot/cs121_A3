@@ -26,7 +26,7 @@ class PathMapper:
         self.root_path = root_path
 
         name = re.sub(r'[<>:"/\\|?*]', '_', self.root_path)
-        self._mapper_disk_path = _MAPPER_DIR / name
+        self._mapper_disk_path = _MAPPER_DIR / f'{name}.json'
 
         self.path_to_id, self.url_to_id = ({}, {})
 
@@ -34,6 +34,10 @@ class PathMapper:
             logger.debug(f'Building PathMapper from scratch')
             self.construct_mapping()
             self._save()
+
+        # Construct dict for the inverse direction (id -> url from url -> id). In self.url_to_id,
+        # both the keys and values are implicitly sets (all unique).
+        self.id_to_url = {doc_id: url for url, doc_id in self.url_to_id.items()}
     
     def construct_mapping(self):
         """
@@ -94,7 +98,7 @@ class PathMapper:
         :return: URL if found, else an empty string
         """
 
-        return next((url for url, id in self.url_to_id.items() if id == doc_id), "")
+        return self.id_to_url[doc_id]
 
     def _save(self):
         """
