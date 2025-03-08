@@ -1,6 +1,9 @@
 from collections import defaultdict
 from pathlib import Path
 
+from nltk.corpus import wordnet
+from nltk.stem import PorterStemmer
+
 from index.inverted_index import InvertedIndex, Posting
 from index.path_mapper import PathMapper
 
@@ -19,6 +22,8 @@ class Searcher:
     def _process_query(self, query: str) -> set[str]:
         """
         Processes the query by normalizing, tokenizing, lemmatizing, and expanding terms.
+        
+        Expands terms using synonyms from WordNet and stemming.
 
         Args:
             query: String search query.
@@ -32,9 +37,20 @@ class Searcher:
         # Lemmatize tokens
         lemmatized_tokens = {self.lemmatizer.lemmatize(token) for token in tokens}
         
-        # Expand query (for now, just duplicate lemmatized tokens; could be improved)
-        expanded_tokens = lemmatized_tokens.union(tokens)
+        # Apply stemming
+        stemmer = PorterStemmer()
+        stemmed_tokens = {stemmer.stem(token) for token in tokens}
         
+        # Expand with synonyms from WordNet
+        synonym_tokens = set()
+        for token in lemmatized_tokens:
+            for syn in wordnet.synsets(token):
+                for lemma in syn.lemmas():
+                    synonym_tokens.add(lemma.name().replace('_', ' '))  # Handle multi-word synonyms
+
+        # Combine all variations
+        expanded_tokens = lemmatized_tokens.union(stemmed_tokens, synonym_tokens, tokens)
+
         return expanded_tokens
 
     def search(self, query: str) -> list[str]:
@@ -75,5 +91,3 @@ class Searcher:
         ]
         
         return result_urls
-
-
