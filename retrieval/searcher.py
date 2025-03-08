@@ -3,6 +3,8 @@ from pathlib import Path
 
 from nltk.corpus import wordnet
 from nltk.stem import PorterStemmer
+from spellchecker import SpellChecker
+from textblob import Word
 
 from index.inverted_index import InvertedIndex, Posting
 from index.path_mapper import PathMapper
@@ -19,7 +21,7 @@ class Searcher:
         self._index = InvertedIndex(source_dir_path, **kwargs)
         self.path_mapper = self._index._mapper
 
-    def _process_query(query: str) -> set[str]:
+    def _process_query(self, query: str) -> set[str]:
         """
         Processes the query by normalizing, tokenizing, lemmatizing, expanding terms,
         and correcting spelling errors.
@@ -42,11 +44,7 @@ class Searcher:
         corrected_tokens = {spell.correction(token) or token for token in tokens}
         
         # Lemmatize tokens
-        lemmatized_tokens = {self.lemmatizer.lemmatize(token) for token in corrected_tokens}
-        
-        # Apply stemming
-        stemmer = PorterStemmer()
-        stemmed_tokens = {stemmer.stem(token) for token in corrected_tokens}
+        lemmatized_tokens = {Word(token).lemmatize() for token in corrected_tokens}
         
         # Expand with synonyms from WordNet
         synonym_tokens = set()
@@ -56,7 +54,7 @@ class Searcher:
                     synonym_tokens.add(lemma.name().replace('_', ' '))  # Handle multi-word synonyms
 
         # Combine all variations
-        expanded_tokens = lemmatized_tokens.union(stemmed_tokens, synonym_tokens, corrected_tokens)
+        expanded_tokens = lemmatized_tokens.union(synonym_tokens, corrected_tokens)
 
         return expanded_tokens
 
@@ -71,7 +69,7 @@ class Searcher:
             List of page urls ordered by relevance.
         """
         
-        query_tokens = _process_query(query)
+        query_tokens = self._process_query(query)
         doc_scores: dict[int, dict[str, int]] = defaultdict(lambda: defaultdict(int))
         
         for token in query_tokens:
