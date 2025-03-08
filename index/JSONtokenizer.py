@@ -45,13 +45,32 @@ def compute_word_frequencies(tokens):
 
     return countMap
 
-def tokenize_JSON_file(path):
+def get_content_from_JSON(path) -> str:
+    """"
+    Returns the content field from the provided JSON file
+
+    Args:
+        path: Path to JSON file
+
+    Returns:
+        str - content field of JSON
+    """
+    with open(path, 'r') as file:
+        obj = json.load(file) # convert json to dictionary
+        soup = BeautifulSoup(obj['content'], 'html.parser')
+
+        return soup.get_text()
+
+    pass
+
+def tokenize_JSON_file(path, lemmatize=True):
     """
     Tokenizes the content in the JSON file. JSON file must have 1 object which should have the properties
     url, content, encoding.
 
     Args:
         path: str - path to JSON file
+        lemmatize: optional argument to lemmatize tokens
 
     Returns:
         generator: generates list of tokens in json.content property
@@ -60,7 +79,7 @@ def tokenize_JSON_file(path):
         obj = json.load(file) # convert json to dictionary
         soup = BeautifulSoup(obj['content'], 'html.parser')
         
-        return (Word(token).lemmatize() for token in tokenize(soup.get_text()))
+        return ((Word(token).lemmatize() if lemmatize else token) for token in tokenize(soup.get_text()))
 
 def tokenize_JSON_file_with_tags(path, explicit_tags):
     """
