@@ -122,8 +122,8 @@ class Searcher:
                 idf = 0 if token_df == 0 or self._index.page_count == 0 else math.log(self._index.page_count / token_df)
 
                 tfidf = 0
-                for tag, weight in HTML_TAGS_WEIGHTS.items():
-                    tfidf += weight * (1 + math.log(posting.tag_frequencies[tag])) * idf
+                for tag, frequency in posting.tag_frequencies.items():
+                    tfidf += HTML_TAGS_WEIGHTS[tag] * (1 + math.log(frequency)) * idf
 
                 doc_scores[doc_id][token] += tfidf
 
