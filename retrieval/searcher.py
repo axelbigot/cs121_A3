@@ -21,7 +21,8 @@ class Searcher:
 
     def _process_query(self, query: str) -> set[str]:
         """
-        Processes the query by normalizing, tokenizing, lemmatizing, and expanding terms.
+        Processes the query by normalizing, tokenizing, lemmatizing, expanding terms,
+        and correcting spelling errors.
         
         Expands terms using synonyms from WordNet and stemming.
 
@@ -31,15 +32,21 @@ class Searcher:
         Returns:
             A set of processed query tokens.
         """
+        # Initialize spell checker
+        spell = SpellChecker()
+        
         # Normalize and tokenize
         tokens = query.lower().split()
         
+        # Correct spelling errors
+        corrected_tokens = {spell.correction(token) or token for token in tokens}
+        
         # Lemmatize tokens
-        lemmatized_tokens = {self.lemmatizer.lemmatize(token) for token in tokens}
+        lemmatized_tokens = {self.lemmatizer.lemmatize(token) for token in corrected_tokens}
         
         # Apply stemming
         stemmer = PorterStemmer()
-        stemmed_tokens = {stemmer.stem(token) for token in tokens}
+        stemmed_tokens = {stemmer.stem(token) for token in corrected_tokens}
         
         # Expand with synonyms from WordNet
         synonym_tokens = set()
@@ -49,7 +56,7 @@ class Searcher:
                     synonym_tokens.add(lemma.name().replace('_', ' '))  # Handle multi-word synonyms
 
         # Combine all variations
-        expanded_tokens = lemmatized_tokens.union(stemmed_tokens, synonym_tokens, tokens)
+        expanded_tokens = lemmatized_tokens.union(stemmed_tokens, synonym_tokens, corrected_tokens)
 
         return expanded_tokens
 
