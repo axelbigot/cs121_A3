@@ -353,7 +353,7 @@ class InvertedIndex:
             token = f.read(token_length).decode('utf-8') # Decode token.
 
             token_entry_length = struct.unpack('I', f.read(4))[0] # Decode posting list length.
-            token_entry_data = f.read(posting_length) # Decode posting list.
+            token_entry_data = f.read(token_entry_length) # Decode posting list.
 
             # Deserialize postings to protobuf types.
             token_entry = TokenEntry()

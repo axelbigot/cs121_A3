@@ -55,7 +55,7 @@ class Searcher:
         doc_scores: dict[int, dict[str, int]] = defaultdict(lambda: defaultdict(int))
         
         for token in query_tokens:
-            token_docs = self._index[token]
+            token_docs = self._index[token].postings
 
             for posting in token_docs:
                 doc_id = posting.doc_id
