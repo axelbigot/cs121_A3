@@ -1,495 +1,464 @@
-import json
+import bisect
+import heapq
+import logging
 import shutil
+import struct
+import subprocess
+import sys
+import time
 from collections import defaultdict
-from dataclasses import dataclass
-from itertools import tee
 from pathlib import Path
-from typing import Generator
+from typing import BinaryIO, Generator
 
-import platformdirs
 import psutil
-from typing_extensions import TextIO
 
-from index.JSONtokenizer import compute_word_frequencies, tokenize_JSON_file
+from index.JSONtokenizer import tokenize_JSON_file_with_tags
+from index.defs import APP_DATA_DIR
 from index.path_mapper import PathMapper
 
+logger = logging.getLogger(__name__)
 
-# The name of the entire A3 application.
-_APP_NAME = 'CS121_A3'
-# Local data dir for this application.
-_APP_DATA_DIR = Path(platformdirs.user_data_dir(_APP_NAME))
-_INDEXES_DIR = _APP_DATA_DIR / 'indexes'
+current_dir = Path(__file__).resolve().parent
 
-# Default percentage of remaining memory at which time the index should be flushed to disk.
-_DEF_FLUSH_MEMORY_THRESHOLD = 0.5
-# Default number of postings in memory before the index should be flushed.
-_DEF_FLUSH_POSTINGS_THRESHOLD = 10 ** 6
+proto_file = current_dir / 'posting.proto'
+logger.debug(f'Generating protobuf source classes for {proto_file}')
+result = subprocess.run(
+    ['protoc', f'--proto_path={current_dir}', f'--python_out={current_dir}', proto_file],
+    capture_output = True, text = True)
 
-# Wipe the old indexes, if any.
-if _INDEXES_DIR.exists():
-    shutil.rmtree(_INDEXES_DIR)
+if result.returncode != 0:
+    raise RuntimeError(result.stderr)
 
-@dataclass
-class Posting:
-    """
-    Container for an inverted index document posting.
-    """
-    doc_id: int # ID of the document for this posting.
-    frequency: int # Number of occurrences of this token in this document.
+logger.debug('Successfully generated protobuf source classes')
 
-class _Partition:
-    """
-    A section (partition) of an inverted index. Essentially a sub inverted-index that represents
-    a fragment of a larger inverted index. Allows for minimal I/O operations by segregating
-    tokens into small indexes by lexicographical value. To find postings for the token 'cab', for
-    example, instead of reading the entire inverted index from disk using multiple I/O operations
-    (it's too large to load in one op) looking for 'cab', you'd only have to fetch the partition
-    that handles tokens from 'ant' to 'crab' ('cab' falls in this range) which will be a file that
-    can scanned in one I/O operation. Note the actual token range that a partition governs over may
-    differ from the example.
+# These may have error squiggles, but these will resolve correctly at runtime.
+# Dynamically generated classes and module from the above script. Import must be placed after
+# the script.
+from index.posting_pb2 import Posting, PostingList
 
-    Args:
-        partition_dir: Directory where all other related partitions are stored.
-        postings: The inverted index postings that this partition will govern.
-    """
-    def __init__(self, partition_dir: Path, postings: dict[str, list[Posting]]):
-        # The in-memory inverted index (for this partition).
-        # This is the portion of the partition that is "being built" and has not yet been written
-        # to disk.
-        self._in_memory: dict[str, list[Posting]] = postings
+_INDEXES_DIR = APP_DATA_DIR / 'indexes'
 
-        # The root directory for this partition. This is where other partitions belonging to the
-        # same full inverted index will also be stored.
-        self._partition_dir: Path = partition_dir
+# The default number of in-memory postings before writing to disk.
+# Generally, this also doubles as the max in-memory postings for any operation.
+_DEFAULT_POSTINGS_FLUSH_COUNT = 5e4
 
-        # The smallest lexicographical token handled by this partition. The lower limit of contained
-        # tokens (inclusive).
-        self._min_token: str | None = None
+# The default number of in-memory postings in each partition of the merged index.
+# The actual number of postings may be higher, as token postings are not split between partitions
+# (i.e. if the partition size is almost reached and a token with a massive number of entries comes
+# up, that particular partition may far exceed the limit).
+_DEFAULT_PARTITION_SIZE = 5e3
 
-        # The greatest lexicographical token handled by this partition. The upper limit of contained
-        # tokens (inclusive).
-        self._max_token: str | None = None
+_WEIGHTED_TAGS = ["h1", "h2", "h3", "title", "b", "strong"]
 
-        # The path to this partitions disk storage.
-        self._path: Path | None = None
-
-        # Write to disk.
-        self._flush()
-
-    @property
-    def min_token(self) -> str | None:
-        """
-        The smallest lexicographical token handled by this partition. The lower limit of contained
-        tokens (inclusive). If a token is >= min_token and <= max_token, it is guaranteed to be
-        contained within this partition, if it exists anywhere in the inverted index.
-
-        Returns:
-            Smallest-order string token of this partition.
-        """
-        return self._min_token
-
-    @property
-    def max_token(self) -> str | None:
-        """
-        The greatest lexicographical token handled by this partition. The upper limit of contained
-        tokens (inclusive). If a token is >= min_token and <= max_token, it is guaranteed to be
-        contained within this partition, if it exists anywhere in the inverted index.
-
-        Returns:
-            Largest-order string token of this partition.
-        """
-        return self._max_token
-
-    @property
-    def path(self) -> Path | None:
-        """
-        The path to this partitions disk storage.
-
-        Returns:
-            Path object to this partition's physical disk JSON file.
-        """
-        return self._path
-
-    def get(self, token: str) -> list[Posting]:
-        """
-        Retrieve a token's postings from this partition. Searches both virtual and physical (disk)
-        components of the partition.
-
-        Args:
-            token: The token whose associated postings to retrieve.
-
-        Returns:
-            List of Posting objects associated with the token.
-        """
-        return self.fetch()[token]
-
-    def fetch(self) -> defaultdict[str, list[Posting]]:
-        """
-        Fetch this posting's physical (disk) component and convert it to virtual memory.
-
-        Returns:
-            Dict with string tokens as keys and associated Posting objects as values.
-        """
-        # Unmarshall the JSON on the physical disk. We now have a raw python object.
-        with open(self._path, 'r') as f:
-            raw = json.load(f)
-
-        # Massage the raw object into our custom types to make it easier to work with.
-        result = defaultdict(list)
-        for token, raw_postings in raw.items():
-            result[token] = [Posting(**p) for p in raw_postings]
-
-        # The end result is the physical inverted index for this partition in the same format as
-        # the in-memory component.
-        return result
-
-    def items(self) -> Generator[tuple[str, list[Posting]], None, None]:
-        """
-        Get the token-postings items of this partition, searching both physical and virtual
-        components.
-
-        Returns:
-            Generator of dictionary-style token-postings items.
-        """
-        yield from self.fetch().items()
-
-    def _flush(self):
-        """
-        Flush this partition's virtual inverted index to disk, merging with existing physical
-        component if any exists.
-        """
-        # Initialize this partition's defining attributes.
-        sorted_tokens = sorted(self._in_memory)
-        # Set the min and max tokens of the partition. This is the "scope" of the partition.
-        self._min_token, self._max_token = sorted_tokens[0], sorted_tokens[-1]
-        # Set the path to its physical disk, which will be created shortly.
-        self._path = self._partition_dir / f'partition_{self._min_token}_{self._max_token}.json'
-
-        # Create disk if DNE.
-        self._path.parent.mkdir(parents = True, exist_ok = True)
-
-        with open(self._path, "w") as f:
-            # Write to disk
-            json.dump(self._in_memory, f, default = lambda o: o.__dict__)
-
-        # Clear virtual memory. It's all written to disk now.
-        self._in_memory.clear()
-
-    def __iter__(self) -> Generator[str, None, None]:
-        """
-        Iterate over all tokens in this partition, including both physical and virtual components.
-
-        Returns:
-            Generator of token strings.
-        """
-        yield from self.fetch()
-
-    def __str__(self):
-        return json.dumps(self.fetch(), default = lambda o: o.__dict__, indent = 2)
-
-    def __repr__(self):
-        return f'Partition(min_token = {self._min_token}, max_token = {self._max_token})'
 
 class InvertedIndex:
     """
-    An inverted index storing document Posting objects by token.
+    Class representing an inverted index on disk. Provides APIs to read and write to the physical
+    index.
 
     Args:
-        root_dir: The root directory from where to being json file processing when building the
-        index.
-        _id: Custom unique id. The default is to use the object's hash. This doubles as the name
-        of the index dir.
-        max_in_memory_postings: Maximum number of postings to store in memory. When this is crossed,
-        the index is flushed to disk.
-        min_avail_memory_perc: Minimum available memory as a percentage of the total available
-        memory until the index is flushed to disk.
+        root_dir: Root directory containing page .json files.
+        name: Custom name for the inverted index on disk. Defaults to 'index_<obj_hash>'
+        postings_flush_count In-memory posting limit restricting the max postings existing in
+        memory before being flushed to disk, and the max postings that can be read from disk at a
+        time.
+        partition_posting_size: The max postings count for a final sorted partition.
+        persist: Whether NOT to delete the index's disk once its InvertedIndex object is garbage
+        collected.
+        load_existing: Whether to load an existing inverted index from disk into this object, if
+        a matching index exists (by name).
     """
-    def __init__(self, root_dir: str | Path,
-                 _id: str | int | None = None, *,
-                 max_in_memory_postings: int = _DEF_FLUSH_POSTINGS_THRESHOLD,
-                 min_avail_memory_perc: float = _DEF_FLUSH_MEMORY_THRESHOLD):
-        self.id = str(_id) if _id else str(self.__hash__())
-        self.max_in_memory_postings = max_in_memory_postings
-        self.min_avail_memory_perc = min_avail_memory_perc
-        self.doc_count = 0
+    def __init__(self, root_dir: str | Path, *,
+                 name: str = '',
+                 postings_flush_count: int = _DEFAULT_POSTINGS_FLUSH_COUNT,
+                 partition_posting_size: int = _DEFAULT_PARTITION_SIZE,
+                 persist: bool = False,
+                 load_existing: bool = False):
+        logger.debug('Initializing new InvertedIndex')
 
-        # Directory that will contain all partitions for this index.
-        self._partition_dir: Path = _INDEXES_DIR / f'index-{self.id}'
-        self._temp_file = self._partition_dir / 'temp.json'
+        self.postings_flush_count = postings_flush_count
+        self.partition_posting_size = partition_posting_size
+        self.persist = persist
 
-        # Total count of postings in virtual memory across all partitions.
-        self._curr_in_memory_postings: int = 0
+        self._root_dir = Path(root_dir) # Source dir for this index's pages.
+        self._buf: dict[str, list[Posting]] = defaultdict(list) # In-memory portion of the index.
+        self._mapper = PathMapper(str(self._root_dir), rebuild = not load_existing) # Doc ids.
+        self._postings_count = 0 # Current in-memory posting count.
+        self._partition_count = 0 # Current number of partitions.
+        self._page_count = 0 # Total number of pages indexed.
+        self._partitions: list[Path] = [] # Index partition files.
 
-        # The partitions - "sub indexes" or "index sections". See the documentation for the
-        # _Partition class above.
-        self._partitions: list[_Partition] = list()
+        self._name = name # Unique name used for loading from disk, if enabled.
 
-        # In-memory portion of the index.
-        self._in_memory: defaultdict[str, list[Posting]] = defaultdict(list)
-        # URL-to-id mapper.
-        self._url_id_mapper = PathMapper(root_dir)
+        if not self._name:
+            self._name = f'index-{self.__hash__()}'
+            logger.debug(f'No custom inverted index name provided. Defaulting to {self._name}')
 
-        # TODO: Hacky way of representing a merged index as a single partition. In the future,
-        # TODO: this will be replaced by dedicated partitions.
-        self._min_token: str | None = None
-        self._max_token: str | None = None
+        self._out_dir = _INDEXES_DIR / self._name # Location of this index on disk.
+        self._merged_file = self._out_dir / f'merged.bin' # Location of the final merged index.
 
-        self._feedr(root_dir)
-        self._flush()
+        # If conditions are right, build a new inverted index from scratch.
+        if not load_existing or not self._out_dir.exists():
+            if load_existing:
+                logger.debug(f'Looked for existing InvertedIndex {self.name} from disk to load, '
+                             f'but one was not found')
 
-        # TODO: Part of same hack above. Will be removed when partitions are properly implemented.
-        # TODO: for now, we're using a single merged index.
-        self._partitions.append(_Partition(self._partition_dir,
-                                           {self._min_token: [], self._max_token: []}))
-        self._temp_file.replace(self._partitions[0].path)
+            logger.debug(f'Starting construction of new InvertedIndex {self.name}')
+            start = time.time()
+
+            self.build() # Build the index. Periodically flushes to disk.
+            self.flush() # Flush any remaining in-memory data to disk.
+
+            logger.debug(f'Merging {self._partition_count} partitions for InvertedIndex {self.name}')
+            self._merge() # Merge partitions.
+
+            logger.debug(f'Partitioning the (sorted) merged index for InvertedIndex {self.name}')
+            self._partition()
+
+            mins, secs = divmod(time.time() - start, 60)
+            logger.debug(f'Finished construction of new InvertedIndex {self.name} '
+                         f'in {f'{mins}m' if mins else ''}{round(secs, 2)}s. '
+                         f'It is now stable (read-access supported)')
+        else:
+            # Load an existing index from disk if available and requested.
+            self.load()
+            logger.debug(f'Loaded existing InvertedIndex {self.name} from disk. '
+                         f'This object now manages it.')
+
+        # Speeds up retrieval by processing min tokens of each partition from their paths, doing
+        # this once instead of during each retrieval operation.
+        self._token_ranges = [str(path).split('_')[-1] for path in self.disks]
+
+    def __del__(self):
+        if not self.persist:
+            # Wipe this index's directory, if it exists.
+            if self._out_dir.exists():
+                shutil.rmtree(self._out_dir)
+            logger.debug(f'Cleaned-up InvertedIndex {self.name} on disk (deleted {self._out_dir})')
+        else:
+            logger.debug(f'InvertedIndex {self.name} marked for persistence. '
+                          f'Its disk was not deleted.')
 
     @property
-    def partition_dir(self) -> Path:
+    def name(self) -> str:
         """
-        The directory containing this index's partitioned disk files.
-
-        Returns:
-            Path to disk directory.
+        The name of the inverted index.
         """
-        return self._partition_dir
+        return self._name
 
     @property
-    def disk_partitions(self) -> Generator[Path, None, None]:
+    def disks(self) -> list[Path]:
         """
-        The index's partitioned disk files. These are the physical indexes where content is stored,
-        which may be spread over multiple files.
+        Paths to the index partitions on disk.
+        """
+        return self._partitions
 
-        Returns:
-            Generator of Paths pointing to disk files.
+    @property
+    def page_count(self) -> int:
         """
-        return (p.path for p in self._partitions)
+        Total number of pages indexed.
+        """
+        return self._page_count
 
     def items(self) -> Generator[tuple[str, list[Posting]], None, None]:
         """
-        Get the token-postings items of this index, searching both physical and virtual components
-        of all partitions.
+        Get dict-style items for the tokens and postings contained in this index's disk.
 
         Returns:
-            Generator of dictionary-style token-postings items.
+            Generator of K, V dict entries where K = string token, V = postings list belonging to
+            that token.
         """
-        for p in self._partitions:
-            yield from p.items()
-
-    def __getitem__(self, token: str) -> list[Posting]:
-        """
-        Retrieve all Postings for a given token.
-
-        Args:
-            token: The token whose Postings to retrieve.
-
-        Returns:
-            A list of all Postings for a given token.
-        """
-        partition = self._get_partition(token)
-        return partition.get(token) if partition else []
+        for disk in self.disks:
+            with open(disk, 'rb') as f:
+                while True:
+                    try:
+                        yield self._next_entry(f)
+                    except StopIteration:
+                        break
 
     def __iter__(self) -> Generator[str, None, None]:
         """
-        Iterate over all tokens across all partitions. Looks for tokens in disk and in memory while
-        respecting memory limits (only one partition is ever loaded at a time).
+        Iterates over this index.
 
         Returns:
-            Generator of token strings.
+            Generator of unique tokens in this index, in order of their placement on disk.
         """
-        for partition in self._partitions:
-            # Partitions are iterable. They return all of their tokens.
-            yield from partition
+        yield from map(lambda item: item[0], self.items())
 
-    def __str__(self) -> str:
-        return ' '.join(map(lambda p: str(p), self._partitions))
-
-    def __repr__(self):
-        return (f'InvertedIndex(max_in_memory_postings = {self.max_in_memory_postings}, '
-                f'min_avail_memory_perc = {self.min_avail_memory_perc}, '
-                f'partitions = {self._partitions.__repr__()})')
-
-    def _get_partition(self, token: str) -> _Partition | None:
+    def __getitem__(self, item: str) -> list[Posting]:
         """
-        Get the partition that governs a specified token.
+        Get the postings associated with a token on disk.
 
         Args:
-            token: The string token.
+            item: The string token name.
 
         Returns:
-            Partition object that the token is or will be a part of.
+            List of postings for that token.
         """
-        for partition in self._partitions:
-            # Find the partition whose 'jurisdiction' this token falls under based on its
-            # lexicographical order.
-            if partition.min_token <= token <= partition.max_token:
-                return partition
+        if type(item) != str:
+            raise TypeError('Indexing item must be a string.')
 
-        # If no existing partitions govern the token, return none.
-        return None
+        for token, postings in self._iter_partition(item):
+            if token == item:
+                return postings
 
-    def _add(self, json_path: Path):
+        return []
+
+    def load(self):
         """
-        Assimilate a document into the inverted index.
-
-        Args:
-            json_path: Path to JSON document.
+        Load an existing inverted index from disk into this object. Matches to a disk index by
+        name.
         """
-        for token, freq in compute_word_frequencies(tokenize_JSON_file(json_path)).items():
-            # TODO: replace with real id once available.
-            self._in_memory[token].append(Posting(doc_id = 0, frequency = freq))
-            # Increment in-memory postings counter.
-            self._curr_in_memory_postings += 1
-
-            if not self._min_token or token < self._min_token:
-                self._min_token = token
-            if not self._max_token or token > self._max_token:
-                self._max_token = token
-
-            # If the in-memory index has become too large (too many postings or too little memory
-            # available), flush (write) the index to physical disk file.
-            if self._curr_in_memory_postings >= self.max_in_memory_postings or self._memory_low():
-                self._flush()
-        self.doc_count += 1
-
-    def _feedr(self, root_dir_path: str | Path):
-        """
-        Feed a directory of documents into the inverted index, recursively searching for and adding
-        documents within the root directory and its child directories.
-
-        Args:
-            root_dir_path: Pathlike to the root directory to be fed.
-        """
-        path = Path(root_dir_path)
-
-        # If a JSON file was provided, use it.
-        if path.is_file():
-            if not path.match('*.json'):
-                raise ValueError(f'{path} is not a JSON file')
-
-            self._add(path)
+        if not self._out_dir.exists():
             return
 
-        # Else a dir was provided.
-        # Get all nested jsons in the root dir and add it to the index.
-        for file in path.rglob('*.json'):
-            self._add(file)
+        for disk in self._out_dir.glob('*.bin'):
+            self._partitions.append(disk)
 
-    def _flush(self):
+    def build(self):
         """
-        Write the inverted index to disk and wipe its in-memory data. The location of the data
-        is somewhere in the user data i.e. C:/../AppData/Local/... in windows. This path is
-        accessible via the #disk_dir property.
+        Build the inverted index from its root_dir source.
         """
-        self._temp_file.parent.mkdir(parents = True, exist_ok = True)
-        self._merge_with_disk()
+        # Delete (possibly) existing index dir, and remake it.
+        if self._out_dir.exists():
+            shutil.rmtree(self._out_dir)
+        self._out_dir.mkdir(parents = True, exist_ok = True)
 
-        self._in_memory.clear()
-        self._curr_in_memory_postings = 0
+        # Add each page in the root dir.
+        for page in self._root_dir.rglob('*.json'):
+            self._add_page(page)
 
-    def _merge_with_disk(self):
+    def flush(self):
         """
-        Merges the in-memory index with the index on disk, maintaining sorted order.
-        constant O(1) space complexity relative to the size of the index on disk as the disk files
-        are streamed line-by-line. As the index grows, the virtual memory consumed by this
-        method largely stays the same.
-
-        TODO: This fulfills the requirements of M1 to not load the entire index in memory, but it is
-        overkill and heavily increases the duration of the index build, which will be optimized by
-        M2.
-
-        TODO: Further optimizations: avoid JSON. Our file sizes are huge.
+        Write the in-memory portion of the index to a partition on disk.
         """
-        temp_merged_file = self._partition_dir / 'temp_merged.json'
+        disk = self._out_dir / f'partition_{self._partition_count}.bin'
+        self._partitions.append(disk)
+        self._partition_count += 1
 
-        with open(temp_merged_file, 'w') as out:
-            # Top level object opening brace.
-            out.write('{')
-            # Flag used to indicate when commas should be written.
-            first_entry = True
-            if self._temp_file.exists():
-                with open(self._temp_file, 'r') as disk_file:
-                    for line in disk_file:
-                        content = line.strip()
+        self._flush_idx_data(disk, self._buf)
 
-                        # Do not parse top-level JSON object lines.
-                        if content in ['{', '}']:
-                            continue
-
-                        # Remove terminating comma from entry.
-                        content = content[:-1] if content[-1] == ',' else content
-
-                        # Treat the entry as its own json object to leverage python's json.loads.
-                        # Probably a bit hacky but it works. We're essentially turning a key-value
-                        # pair k: v into an object {k: v} and mapping it to our types.
-                        entry = json.loads('{' + content + '}')
-                        # Disk token and its postings.
-                        token, postings = list(entry.items())[0]
-
-                        # To maintain proper sorted order on disk, for any in-memory tokens that
-                        # are less than the current disk token, write them to disk first.
-                        for lesser_token in (
-                                t for t in list(sorted(self._in_memory.keys())) if t < token):
-                            self._dump_memory_postings(out, lesser_token, first_entry)
-                            first_entry = False
-
-                        # Combine the disk postings with in-memory postings for the same token,
-                        # if any.
-                        if token in self._in_memory:
-                            postings.extend(
-                                posting.__dict__ for posting in self._in_memory.pop(token))
-
-                        # Write the combined token-posting entry to disk.
-                        self._write_json_str_as_field(
-                            out, json.dumps({token: postings}), first_entry)
-                        first_entry = False
-
-            # Flush any tokens that were not already added from memory to the end of the disk.
-            # If they weren't added, it means they're greater than all tokens in disk.
-            for token in list(sorted(self._in_memory.keys())):
-                self._dump_memory_postings(out, token, first_entry)
-                first_entry = False
-
-            out.write('\n}')
-
-        # Discard the old disk and replace it with this new merged disk.
-        temp_merged_file.replace(self._temp_file)
-
-    def _write_json_str_as_field(self, out: TextIO, raw: str, first_entry = False):
+    def _merge(self):
         """
-        Write a JSON stringified object as a field.
+        Merge all partitions into a single index file using K-way merge algorithm. Maintains
+        O(1) space complexity relative to total index size on disk and O(N) time complexity
+        relative to total number of entries on index (N = K1 + K2 + .. + Kn, Ki ∈ Files being
+        merged.)
+        """
+        # Open each partition file simultaneously.
+        f_streams = [open(p, 'rb') for p in self._partitions]
+        pq = [] # Priority Queue (min heap) to track the least token. We want to maintain sort
+                # in the merged file.
 
-        i.e. {k: v} becomes k: v,
+        # First pass of the partition files - init the min heap with their first tokens.
+        for i, stream in enumerate(f_streams):
+            try:
+                token, posting_list = self._next_entry(stream)
+                heapq.heappush(pq, (token, i, posting_list)) # O(log N), N = heap items count.
+            except StopIteration:
+                pass
+
+        last_token = None # Previous token. Used to determine when posting lists should be merged.
+        batch: list[tuple] = [] # Current in-memory merged segment, written in batches.
+
+        while pq: # Iterate until nothing left in token queue.
+            token, idx, posting_list = heapq.heappop(pq) # Get the next (smallest) token entry for
+                                                         # merging. O(log N), N = heap items count.
+            if last_token == token:
+                # Same token in two partitions - merge their postings.
+                # Protobuf's MergeFrom() is O(N) for repeated fields (such as posting list), N =
+                # number of repeated fields.
+                batch[-1][1].MergeFrom(posting_list)
+            else:
+                # New token - append it to the batch.
+                batch.append((token, posting_list))
+                last_token = token # New token = new latest token.
+
+            try:
+                # Push the next token and postings to be added from this partition to the min heap.
+                next_token, next_posting_list = self._next_entry(f_streams[idx])
+                heapq.heappush(pq, (next_token, idx, next_posting_list))
+            except StopIteration:
+                pass
+
+            new_batch = []
+            # Write the batch to disk if it exceeds the in-memory postings limit.
+            if len(batch) >= self.postings_flush_count:
+                # Map it to a dict of helper function typing consistency.
+                d: dict[str, list[Posting]] = {}
+                for token, posting_list in batch:
+                    if token == last_token:
+                        new_batch.append((token, posting_list))
+                    else:
+                        d[token] = list(posting_list)
+                batch.clear()
+                batch.extend(new_batch)
+
+                if d:
+                    self._flush_idx_data(self._merged_file, d)
+
+        # Write any residual data to disk (final batch).
+        if batch:
+            d: dict[str, list[Posting]] = {}
+            for token, posting_list in batch:
+                d[token] = list(posting_list)
+            batch.clear()
+            self._flush_idx_data(self._merged_file, d)
+
+        # Close all partition disks.
+        for f in f_streams:
+            f.close()
+
+        # Paritition files no longer needed - they're all merged.
+        for partition in self._partitions:
+            partition.unlink(missing_ok = True)
+
+        # Index now consists solely of a single merged file.
+        self._partitions = [self._merged_file]
+        self._partition_count = 0
+
+    def _flush_idx_data(self, disk: Path, data: dict[str, list[Posting]]):
+        """
+        Flush arbitrary inverted index data to disk.
 
         Args:
-            out: The disk.
-            raw: Raw stringified json.
-            first_entry: First entry flag. Determines whether to prefix with a comma or not. If it's
-            not the first entry, this is required for valid syntax.
+            disk: The disk file path to write to.
+            data: Inverted index data in memory.
         """
-        prefix = '\n' if first_entry else ',\n'
-        out.write(f'{prefix}{raw[1:-1]}')
+        logger.debug(f'Flushing {sys.getsizeof(data) / 1024}KB from memory to {disk}')
+        logger.debug(f'{psutil.virtual_memory().percent}% virtual memory currently used')
 
-    def _dump_memory_postings(self, out: TextIO, token: str, first_entry = False):
+        with open(disk, 'ab+') as f:
+            for token, postings in sorted(data.items()):
+                # Map to protobuf types and serialize.
+                posting_list = PostingList(postings = postings)
+                postings_data = posting_list.SerializeToString()
+
+                # Write the length of the token. Needed to efficiently stream data token-by-token.
+                # We need to know where one token entry ends and another starts; these are variable.
+                f.write(struct.pack('I', len(token)))
+                # Write the token.
+                f.write(token.encode('utf-8'))
+                # Write the size of the postings.
+                f.write(struct.pack('I', len(postings_data)))
+                # Write the serialized postings.
+                f.write(postings_data)
+
+        data.clear()
+
+    def _partition(self):
         """
-        Write the postings of a token in memory to disk, and remove it from memory.
+        Partition the merged inverted index file to several smaller files. These partitions are
+        lexicographically ordered. Runs in O(N) time relative to the size of the merged index.
+        """
+        merged = self.disks[0]
+        self._postings_count = 0
+        with open(merged, 'rb') as f:
+            while True: # Runs until there are no more entries.
+                try:
+                    # Appends tokens to the in-memory buffer while under the partition size
+                    # threshold.
+                    while self._postings_count < self.partition_posting_size:
+                        token, postings = self._next_entry(f)
+                        self._buf[token] = postings
+                        self._postings_count += len(postings)
+                except StopIteration:
+                    # No more entries.
+                    break
+                finally:
+                    # Write in-memory partition to disk.
+                    min_token = sorted(self._buf.keys())[0]
+                    name = f'partition_{min_token}.bin'
+                    path = self._out_dir / name
+
+                    self._flush_idx_data(path, self._buf)
+                    self._partitions.append(path)
+                    self._postings_count = 0
+
+        merged.unlink()
+        self._partitions.remove(merged)
+
+    def _get_partition_file(self, token: str) -> Path:
+        """
+        Gets the partition file that contains the provided token, if the token exists (i.e. the
+        token is in this partition, or it is nowhere in the index). Uses binary search to find
+        the right partition in O(log N) time, N = number of partitions.
 
         Args:
-            out: The disk.
-            token: Token to dump from memory.
-            first_entry: First entry flag. Whether this is the first posting being written.
-        """
-        # JSONify the entry and write to disk, removing from memory.
-        self._write_json_str_as_field(out,
-                                      json.dumps({ token: [posting.__dict__ for posting in
-                                                           self._in_memory.pop(token)]}),
-                                      first_entry)
+            token: Token whose partition path to retrieve.
 
-    def _memory_low(self) -> bool:
-        """
-        Check if memory is too low.
         Returns:
-            True if memory is too low, False otherwise.
+            Path to partition file.
         """
-        # RAM & other virtual mem.
-        vmem = psutil.virtual_memory()
-        return vmem.percent < self.min_avail_memory_perc * 100
+        index = bisect.bisect_left(self._token_ranges, token)
+        return self.disks[index - 1] if index else self.disks[0]
+
+    def _iter_partition(self, token: str) -> Generator[tuple[str, list], None, None]:
+        """
+        Iterates over all token-posting items in specified token's partition.
+
+        Args:
+            token: The token whose partition to iterate over.
+
+        Returns:
+            Generator of token-posting tuples.
+        """
+        partition = self._get_partition_file(token)
+        with open(partition, 'rb') as f:
+            while True:
+                try:
+                    yield self._next_entry(f)
+                except StopIteration:
+                    break
+
+    def _next_entry(self, f: BinaryIO) -> tuple[str, list[Posting]]:
+        """
+        Get the next token-postings entry in an opened binary file.
+
+        Args:
+            f: File openend in binary read mode.
+
+        Returns:
+            Tuple entry of (token, postings) for the next token-postings entry in the file.
+        """
+        length_bytes = f.read(4) # Encoded length of the token.
+        if not length_bytes: # Might not be any more tokens.
+            raise StopIteration
+
+        try:
+            token_length = struct.unpack('I', length_bytes)[0] # Decode token length.
+            token = f.read(token_length).decode('utf-8') # Decode token.
+
+            posting_length = struct.unpack('I', f.read(4))[0] # Decode posting list length.
+            postings = f.read(posting_length) # Decode posting list.
+
+            # Deserialize postings to protobuf types.
+            posting_list = PostingList()
+            posting_list.ParseFromString(postings)
+
+            return token, posting_list.postings
+        except:
+            # If something goes wrong, can't reliably parse the file further.
+            raise StopIteration
+
+    def _add_page(self, page: Path):
+        """
+        Add a page to the index.
+
+        Args:
+            page: Path to json response file.
+        """
+        self._page_count += 1
+        doc_id = self._mapper.get_id(str(page))
+        for token, tag_freqs in tokenize_JSON_file_with_tags(page, _WEIGHTED_TAGS).items():
+            self._buf[token].append(Posting(
+                doc_id = doc_id,
+                frequency = sum(tag_freqs.values()), # Kept for now for compatibility.
+                tag_frequencies = tag_freqs))
+            self._postings_count += 1
+
+            # Flush to disk if in-memory index grows too large.
+            if self._postings_count >= self.postings_flush_count:
+                self._postings_count = 0
+                self.flush()
+                self._buf.clear()
