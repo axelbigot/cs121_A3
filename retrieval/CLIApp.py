@@ -1,7 +1,9 @@
 import textwrap
+import time
 from enum import Enum
 from pathlib import Path
 
+from index.path_mapper import logger
 from retrieval import Searcher
 
 
@@ -61,9 +63,11 @@ class CLIApp:
         """
         Obtain result URLs and display the top five.
         """
+        start = time.time()
         results = self._searcher.search(self._latest_query)
         print('Results:')
         print(results[:5])
+        print(f'Query time: {time.time() - start}\t"{self._latest_query}"')
         print()
 
     def _input(self):
