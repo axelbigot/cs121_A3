@@ -16,6 +16,27 @@ class Searcher:
         self._index = InvertedIndex(source_dir_path, **kwargs)
         self.path_mapper = self._index._mapper
 
+    def _process_query(self, query: str) -> set[str]:
+        """
+        Processes the query by normalizing, tokenizing, lemmatizing, and expanding terms.
+
+        Args:
+            query: String search query.
+
+        Returns:
+            A set of processed query tokens.
+        """
+        # Normalize and tokenize
+        tokens = query.lower().split()
+        
+        # Lemmatize tokens
+        lemmatized_tokens = {self.lemmatizer.lemmatize(token) for token in tokens}
+        
+        # Expand query (for now, just duplicate lemmatized tokens; could be improved)
+        expanded_tokens = lemmatized_tokens.union(tokens)
+        
+        return expanded_tokens
+
     def search(self, query: str) -> list[str]:
         """
         Retrieve the most relevant documents for a given query.
