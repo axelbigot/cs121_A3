@@ -10,6 +10,10 @@ from index.inverted_index import InvertedIndex, Posting
 from index.path_mapper import PathMapper
 from index.JSONtokenizer import compute_word_frequencies, tokenize, get_content_from_JSON
 
+HTML_TAGS_WEIGHTS = {
+    "h1": 0.2, "h2": 0.15, "h3": 0.1, "title": 0.4, "b": 0.075, "strong": 0.075
+}
+
 class Searcher:
     """
     Wrapper around an inverted index used to retrieve relevant documents given search results.
@@ -73,6 +77,28 @@ class Searcher:
 
         return numerator / denominator
 
+    def _cosine_similarity(self, query: str, document_text: str):
+        """
+        Calculate the cosine similarity between a query and a document. The document
+        should not include the HTML tags (i.e use soup.get_text()). 1 is similar, 0 is completely different
+
+        Args:
+            query: search query
+            document_text: text portion of a document
+
+        Returns:
+            A number representing the cosine of the angle between the 2 strings in vector space.
+        """
+        # calculate vectors for both strings (vector = word frequencies)
+        query_vector = compute_word_frequencies(tokenize(query))
+        document_vector = compute_word_frequencies(tokenize(document_text))
+
+        # calculate cosine
+        numerator = sum(query_vector.get(word, 0) * document_vector.get(word, 0) for word in set(list(query_vector.keys()) + list(document_vector.keys())))
+        denominator = math.sqrt(sum(frequency ** 2 for frequency in query_vector.values()) * sum(frequency ** 2 for frequency in document_vector.values()))
+
+        return numerator / denominator
+
     def search(self, query: str) -> list[str]:
         """
         Retrieve the most relevant documents for a given query.
@@ -95,7 +121,10 @@ class Searcher:
                 doc_id = posting.doc_id
                 idf = 0 if token_df == 0 or self._index.page_count == 0 else math.log(self._index.page_count / token_df)
 
-                tfidf = (1 + math.log(posting.frequency)) * idf
+                tfidf = 0
+                for tag, frequency in posting.tag_frequencies.items():
+                    tfidf += HTML_TAGS_WEIGHTS[tag] * (1 + math.log(frequency)) * idf
+
                 doc_scores[doc_id][token] += tfidf
 
         # filter documents to only include all query tokens
