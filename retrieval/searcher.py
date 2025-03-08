@@ -19,7 +19,7 @@ class Searcher:
         self._index = InvertedIndex(source_dir_path, **kwargs)
         self.path_mapper = self._index._mapper
 
-    def _process_query(self, query: str) -> set[str]:
+    def _process_query(query: str) -> set[str]:
         """
         Processes the query by normalizing, tokenizing, lemmatizing, expanding terms,
         and correcting spelling errors.
@@ -71,7 +71,7 @@ class Searcher:
             List of page urls ordered by relevance.
         """
         
-        query_tokens = set(query.lower().split())
+        query_tokens = _process_query(query)
         doc_scores: dict[int, dict[str, int]] = defaultdict(lambda: defaultdict(int))
         
         for token in query_tokens:
