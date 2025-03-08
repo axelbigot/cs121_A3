@@ -173,3 +173,6 @@ cython_debug/
 
 developer/
 .idea/
+
+# Generated protobuf sources
+**/*_pb2.py
