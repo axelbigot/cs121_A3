@@ -1,0 +1,7 @@
+<h3 class="search-time">{{ search_time }}</h3>
+
+{% for result in results %}
+    <div class="result-item">
+        <a href="{{ result }}" target="_blank">{{ result }}</a>
+    </div>
+{% endfor %}
