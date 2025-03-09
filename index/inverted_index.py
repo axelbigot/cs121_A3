@@ -120,8 +120,9 @@ class InvertedIndex:
             self._partition()
 
             mins, secs = divmod(time.time() - start, 60)
+            min_fmt = f'{mins}m' if mins else ''
             logger.debug(f'Finished construction of new InvertedIndex {self.name} '
-                         f'in {f'{mins}m' if mins else ''}{round(secs, 2)}s. '
+                         f'in {min_fmt}{round(secs, 2)}s. '
                          f'It is now stable (read-access supported)')
         else:
             # Load an existing index from disk if available and requested.

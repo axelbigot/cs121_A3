@@ -177,3 +177,5 @@ developer/
 
 # Generated protobuf sources
 **/*_pb2.py
+
+developer.zip
