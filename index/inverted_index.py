@@ -233,7 +233,7 @@ class InvertedIndex:
             # This accesses the file on disk which is inefficient bc the tokenizer does that.
             # We can move this logic to tokenizer which will improve runtime but increase coupling.
             # Putting it here because we build the index only once
-            if _is_similar(page):
+            if self._is_similar(page):
                 continue
 
             self._add_page(page)
@@ -475,7 +475,7 @@ class InvertedIndex:
                 self.flush()
                 self._buf.clear()
 
-    def _is_similar(page: Path) -> bool:
+    def _is_similar(self, page: Path) -> bool:
         """
         Returns True if provided content is similar to another document.
     
