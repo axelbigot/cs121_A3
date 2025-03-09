@@ -5,6 +5,7 @@ import math
 from nltk.stem import PorterStemmer
 from spellchecker import SpellChecker
 from textblob import Word
+import time
 
 from index.inverted_index import InvertedIndex, Posting
 from index.path_mapper import PathMapper
@@ -86,8 +87,11 @@ class Searcher:
 
         Returns:
             List of page urls ordered by relevance.
+            Search time of query
         """
-        
+
+        start_time = time.perf_counter()
+
         query_tokens = self._process_query(query)
         doc_scores: dict[int, dict[str, int]] = defaultdict(lambda: defaultdict(int))
         
@@ -133,5 +137,9 @@ class Searcher:
             for doc_id, _ in sorted_docs 
             if self.path_mapper.get_url_by_id(doc_id)
         ]
-        
-        return result_urls
+
+        end_time = time.perf_counter()
+        search_time = f"Found {len(result_urls)} results in {round(end_time - start_time, 3)} seconds"
+
+        return result_urls, search_time
+
