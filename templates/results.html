@@ -3,5 +3,46 @@
 {% for result in results %}
     <div class="result-item">
         <a href="{{ result }}" target="_blank">{{ result }}</a>
+        <div class="details" style="display: none;">
+            <p>{{ summary }}</p>
+        </div>
+        <button class="toggle-button"
+            hx-get="/result-details"
+            hx-target="next .details" 
+            hx-swap="outerHTML" 
+            hx-on:click=
+                "this.closest('.result-item').classList.toggle('expanded');
+                let details = this.closest('.result-item').querySelector('.details');
+                details.style.display = details.style.display === 'none' ? 'block' : 'none';
+                this.innerText = details.style.display === 'none' ? '▼' : '▲';"> 
+            ▼ 
+        </button>
     </div>
 {% endfor %}
+
+<div id="result-traversal" class="result-traversal">
+    <button 
+        id="previous-button" 
+        class="previous-button"
+        hx-get="/search" 
+        hx-target="#results"
+        hx-vals='{"query": "{{ request.args.get("query", "") }}", "page": {{ page - 1 }} }'
+        {% if page <= 1 %}disabled{% endif %}
+    >
+        Previous
+    </button>
+
+    <div class="page-count">Page {{ page }} of {{ (total_results // results_per_page) + (1 if total_results % results_per_page > 0 else 0) }}</div>
+
+    <button 
+        id="next-button" 
+        class="next-button"
+        hx-get="/search" 
+        hx-target="#results"
+        hx-vals='{"query": "{{ request.args.get("query", "") }}", "page": {{ page + 1 }} }'
+        {% if page * results_per_page >= total_results %}disabled{% endif %}
+    >
+        Next
+    </button>
+</div>
+

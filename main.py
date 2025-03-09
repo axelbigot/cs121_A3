@@ -5,7 +5,6 @@ import pyfiglet
 
 from retrieval import CLIApp
 
-
 parser = argparse.ArgumentParser(description = 'Main entry point for the A3 Search Engine')
 parser.add_argument('-d', '--debug', action = 'store_true', help = 'Enable debug mode')
 parser.add_argument('-s', '--source', type = str, default = 'developer',
