@@ -53,7 +53,6 @@ class Searcher:
 
         # Combine all variations
         expanded_tokens = lemmatized_tokens.union(corrected_tokens)
-        print(expanded_tokens)
         return expanded_tokens
 
     def _cosine_similarity(self, query: str, document_text: str):

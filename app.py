@@ -10,14 +10,14 @@ DEBUG = os.environ.get('DEBUG', 'False') == 'True'
 SOURCE = os.environ.get('SOURCE', 'developer')
 REBUILD = os.environ.get('REBUILD', 'False') == 'True'
 
-logging.basicConfig(level = logging.DEBUG,
+logging.basicConfig(level = logging.DEBUG if DEBUG else logging.INFO,
                     format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-if os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
+if not DEBUG or os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
     searcher = Searcher(
         SOURCE,
         name = 'index_main' if SOURCE == 'developer' else 'index_debug',
