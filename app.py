@@ -17,12 +17,13 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-searcher = Searcher(
-    SOURCE,
-    name = 'index_main' if SOURCE == 'developer' else 'index_debug',
-    persist = True,
-    load_existing = not REBUILD
-)
+if os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
+    searcher = Searcher(
+        SOURCE,
+        name = 'index_main' if SOURCE == 'developer' else 'index_debug',
+        persist = True,
+        load_existing = not REBUILD
+    )
 
 @app.route('/')
 def index():
