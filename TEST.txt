@@ -1,0 +1,23 @@
+Well-performing queries (< 300ms):
+master of software engineering
+a test query
+this will not return any results
+e
+hello
+quick
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+
+Poorly-perofrming queries:
+a (529ms)
+the (616ms)
+1 (555ms)
+to be or not to be (588ms)
+$$$$$$$$$$$$$$$$$$$$$$$$$ (4094ms)
+mmmmmmmmmmmmmmmmm (1638ms)
+uci (300ms)
+ics (401ms)
+u (350ms)
+a e i o u (526ms)
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (8873ms)
+Iftekhar Ahmed (375ms)
+nonexistentterm (1292ms)
