@@ -7,7 +7,7 @@ hello
 quick
 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 
-Poorly-perofrming queries:
+Poorly-performing queries:
 a (529ms)
 the (616ms)
 1 (555ms)
