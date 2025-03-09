@@ -1,21 +1,16 @@
-import argparse
 import logging
 import os
 
 import pyfiglet
 from flask import Flask, render_template, url_for, request, jsonify
-from pathlib import Path
 from retrieval import Searcher
 
-parser = argparse.ArgumentParser(description = 'Main entry point for the A3 Search Engine')
-parser.add_argument('-d', '--debug', action = 'store_true', help = 'Enable debug mode')
-parser.add_argument('-s', '--source', type = str, default = 'developer',
-                    help = 'The source directory of pages for the inverted index (default: ./developer).')
-parser.add_argument('-r', '--rebuild', action = 'store_true',
-                    help = 'Whether to rebuild the inverted index.')
-args = parser.parse_args()
 
-logging.basicConfig(level = logging.DEBUG if args.debug else logging.INFO,
+DEBUG = os.environ.get('DEBUG', 'False') == 'True'
+SOURCE = os.environ.get('SOURCE', 'developer')
+REBUILD = os.environ.get('REBUILD', 'False') == 'True'
+
+logging.basicConfig(level = logging.DEBUG,
                     format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
 logger = logging.getLogger(__name__)
@@ -23,10 +18,10 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 
 searcher = Searcher(
-    args.source,
-    name = 'index_main' if args.source == 'developer' else 'index_debug',
+    SOURCE,
+    name = 'index_main' if SOURCE == 'developer' else 'index_debug',
     persist = True,
-    load_existing = not args.rebuild
+    load_existing = not REBUILD
 )
 
 @app.route('/')
