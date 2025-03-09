@@ -38,6 +38,7 @@ class PathMapper:
         # Construct dict for the inverse direction (id -> url from url -> id). In self.url_to_id,
         # both the keys and values are implicitly sets (all unique).
         self.id_to_url = {doc_id: url for url, doc_id in self.url_to_id.items()}
+        self.id_to_path = {doc_id: path for path, doc_id in self.path_to_id.items()}
     
     def construct_mapping(self):
         """
@@ -136,3 +137,14 @@ class PathMapper:
         self.url_to_id = data["url_to_id"]
 
         return True
+
+
+    def get_path_by_id(self, doc_id: int) -> str:
+        """
+        Retrieves the PATH for a given document ID
+        
+        :param doc_id: Document ID to look up in dictionary
+        :return: PATH if found, else an empty string
+        """
+
+        return self.id_to_path[doc_id]

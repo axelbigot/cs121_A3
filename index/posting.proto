@@ -11,3 +11,8 @@ message Posting {
 message PostingList {
   repeated Posting postings = 1;
 }
+
+message TokenEntry {
+    uint32 df = 1;
+    repeated Posting postings = 2;
+}

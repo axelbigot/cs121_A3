@@ -12,12 +12,11 @@ from unittest.mock import patch
 
 import psutil
 
-from JSONtokenizer import compute_word_frequencies, tokenize_JSON_file
 from index import InvertedIndex
 from index.inverted_index import _WEIGHTED_TAGS
-from index.JSONtokenizer import tokenize_JSON_file_with_tags
+from index.JSONtokenizer import tokenize_JSON_file_with_tags, compute_word_frequencies, tokenize_JSON_file
 from index.posting_pb2 import Posting
-from path_mapper import PathMapper
+from index.path_mapper import PathMapper
 from retrieval import CLIApp
 
 
