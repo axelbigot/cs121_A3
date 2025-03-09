@@ -5,10 +5,15 @@ import math
 from nltk.stem import PorterStemmer
 from spellchecker import SpellChecker
 from textblob import Word
+import time
 
 from index.inverted_index import InvertedIndex, Posting
 from index.path_mapper import PathMapper
-from index.JSONtokenizer import compute_word_frequencies, tokenize, get_content_from_JSON
+from index.JSONtokenizer import compute_word_frequencies, tokenize, get_soup_from_JSON
+
+HTML_TAGS_WEIGHTS = {
+    "h1": 0.2, "h2": 0.15, "h3": 0.1, "title": 0.4, "b": 0.075, "strong": 0.055, "other": 0.02
+}
 
 class Searcher:
     """
@@ -82,8 +87,11 @@ class Searcher:
 
         Returns:
             List of page urls ordered by relevance.
+            Search time of query
         """
-        
+
+        start_time = time.perf_counter()
+
         query_tokens = self._process_query(query)
         doc_scores: dict[int, dict[str, int]] = defaultdict(lambda: defaultdict(int))
         
@@ -95,7 +103,11 @@ class Searcher:
                 doc_id = posting.doc_id
                 idf = 0 if token_df == 0 or self._index.page_count == 0 else math.log(self._index.page_count / token_df)
 
-                tfidf = (1 + math.log(posting.frequency)) * idf
+                tfidf = 0
+                for tag, frequency in posting.tag_frequencies.items():
+                    log = 0 if frequency == 0 else math.log(frequency)
+                    tfidf += HTML_TAGS_WEIGHTS[tag] * (1 + log) * idf
+
                 doc_scores[doc_id][token] += tfidf
 
         # filter documents to only include all query tokens
@@ -109,9 +121,12 @@ class Searcher:
         cosign_scores: dict[int, int] = defaultdict(int)
         for document_id, _ in sorted_docs[:50]:
             document_path = self.path_mapper.get_path_by_id(document_id)
-            document_text = get_content_from_JSON(document_path)
+            soup = get_soup_from_JSON(document_path)
+            if not soup:
+                cosign_scores[document_id] = 0
+            else:
+                cosign_scores[document_id] = self._cosine_similarity(query, soup.get_text(' '))
 
-            cosign_scores[document_id] = self._cosine_similarity(query, document_text)
 
         # resorting
         sorted_docs = sorted(cosign_scores.items(), key = lambda x : x[1], reverse = True)
@@ -122,5 +137,9 @@ class Searcher:
             for doc_id, _ in sorted_docs 
             if self.path_mapper.get_url_by_id(doc_id)
         ]
-        
-        return result_urls
+
+        end_time = time.perf_counter()
+        search_time = f"Found {len(result_urls)} results in {round(end_time - start_time, 3)} seconds"
+
+        return result_urls, search_time
+

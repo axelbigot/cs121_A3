@@ -6,6 +6,7 @@ import struct
 import subprocess
 import sys
 import time
+import json
 from collections import defaultdict
 from pathlib import Path
 from typing import BinaryIO, Generator
@@ -15,6 +16,7 @@ import psutil
 from index.JSONtokenizer import tokenize_JSON_file_with_tags
 from index.defs import APP_DATA_DIR
 from index.path_mapper import PathMapper
+from index._simhash import simhash, calculate_similarity_score
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +51,7 @@ _DEFAULT_POSTINGS_FLUSH_COUNT = 5e4
 _DEFAULT_PARTITION_SIZE = 5e3
 
 _WEIGHTED_TAGS = ["h1", "h2", "h3", "title", "b", "strong"]
+_SIMILARITY_THRESHOLD = 0.95
 
 
 class InvertedIndex:
@@ -87,6 +90,7 @@ class InvertedIndex:
         self._partition_count = 0 # Current number of partitions.
         self._page_count = 0 # Total number of pages indexed.
         self._partitions: list[Path] = [] # Index partition files.
+        self._simhashes = set() # set of documents simhashes
 
         self._name = name # Unique name used for loading from disk, if enabled.
 
@@ -116,8 +120,9 @@ class InvertedIndex:
             self._partition()
 
             mins, secs = divmod(time.time() - start, 60)
+            min_fmt = f'{mins}m' if mins else ''
             logger.debug(f'Finished construction of new InvertedIndex {self.name} '
-                         f'in {f'{mins}m' if mins else ''}{round(secs, 2)}s. '
+                         f'in {min_fmt}{round(secs, 2)}s. '
                          f'It is now stable (read-access supported)')
         else:
             # Load an existing index from disk if available and requested.
@@ -226,6 +231,12 @@ class InvertedIndex:
 
         # Add each page in the root dir.
         for page in self._root_dir.rglob('*.json'):
+            # This accesses the file on disk which is inefficient bc the tokenizer does that.
+            # We can move this logic to tokenizer which will improve runtime but increase coupling.
+            # Putting it here because we build the index only once
+            if self._is_similar(page):
+                continue
+
             self._add_page(page)
 
     def flush(self):
@@ -464,3 +475,28 @@ class InvertedIndex:
                 self._postings_count = 0
                 self.flush()
                 self._buf.clear()
+
+    def _is_similar(self, page: Path) -> bool:
+        """
+        Returns True if provided content is similar to another document.
+    
+        Args:
+            page: Path to the json of a document
+    
+        Returns:
+            bool: if the document is similar to another one
+        """
+        with open(page, 'r') as file:
+            html = json.load(file)['content']
+            hashed_doc = simhash(html)
+        
+            if hashed_doc in self._simhashes:
+                return True
+        
+            # TODO: with a big index, we may not be able to hold every single simhash in memory
+            for explored_hash in self._simhashes:
+                sim = calculate_similarity_score(hashed_doc, explored_hash)
+                if sim >= _SIMILARITY_THRESHOLD:
+                    return True
+    
+        return False

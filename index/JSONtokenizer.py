@@ -2,6 +2,7 @@ import re
 import json
 from bs4 import BeautifulSoup, NavigableString, Comment, Declaration
 from textblob import Word
+import warnings
 
 def _ignore_nested_tags(element):
     """
@@ -23,7 +24,7 @@ def tokenize(string):
         generator: generates list of tokens
     """
 
-    return (word.lower() for word in re.sub(r'[^a-zA-Z\d]', " ", string).split() if len(word) > 1)
+    return (word.lower() for word in re.sub(r'[^a-zA-Z\d]', " ", string).split())
 
 def compute_word_frequencies(tokens):
     """
@@ -45,7 +46,7 @@ def compute_word_frequencies(tokens):
 
     return countMap
 
-def get_content_from_JSON(path) -> str:
+def get_soup_from_JSON(path) -> BeautifulSoup:
     """"
     Returns the content field from the provided JSON file
 
@@ -57,9 +58,17 @@ def get_content_from_JSON(path) -> str:
     """
     with open(path, 'r') as file:
         obj = json.load(file) # convert json to dictionary
-        soup = BeautifulSoup(obj['content'], 'html.parser')
 
-        return soup.get_text()
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+
+            try:
+                soup = BeautifulSoup(obj['content'], 'lxml')
+            except Exception as e:
+                print(f'Error parsing HTML with warning: {e}, path: {path}')
+                return
+
+        return soup
 
     pass
 
@@ -75,11 +84,11 @@ def tokenize_JSON_file(path, lemmatize=True):
     Returns:
         generator: generates list of tokens in json.content property
     """
-    with open(path, 'r') as file:
-        obj = json.load(file) # convert json to dictionary
-        soup = BeautifulSoup(obj['content'], 'html.parser')
-        
-        return ((Word(token).lemmatize() if lemmatize else token) for token in tokenize(soup.get_text()))
+    soup = get_soup_from_JSON(path)
+    if not soup:
+        return
+
+    return ((Word(token).lemmatize() if lemmatize else token) for token in tokenize(soup.get_text(' ')))
 
 def tokenize_JSON_file_with_tags(path, explicit_tags):
     """
@@ -93,44 +102,45 @@ def tokenize_JSON_file_with_tags(path, explicit_tags):
     """
     dict_tags = explicit_tags + ["other"]
     
-    with open(path, 'r') as file:
-        obj = json.load(file) # convert json to dictionary
-        soup = BeautifulSoup(obj['content'], 'html.parser')
-        total_frequencies = compute_word_frequencies(Word(token).lemmatize() for token in tokenize(soup.get_text(" ")))
+    soup = get_soup_from_JSON(path)
+    if not soup:
+        return dict()
 
-        # lemmatized token = {tag_frequencies}
-        tag_frequencies = dict()
+    total_frequencies = compute_word_frequencies(Word(token).lemmatize() for token in tokenize(soup.get_text(' ')))
 
-        # explicit tags:
-        for tag in explicit_tags:
-            for soup_tag in soup.find_all(tag):
-                string = " ".join(_ignore_nested_tags(soup_tag))
-                if string == None:
-                    continue
-                    
-                frequencies = compute_word_frequencies(Word(token).lemmatize() for token in tokenize(string))
+    # lemmatized token = {tag_frequencies}
+    tag_frequencies = dict()
 
-                for token, frequency in frequencies.items():
-                    frequency_dict = tag_frequencies.get(token, dict.fromkeys(dict_tags, 0))
-                    frequency_dict[tag] = frequency_dict.get(tag) + frequency
-                    
-                    tag_frequencies[token] = frequency_dict
+    # explicit tags:
+    for tag in explicit_tags:
+        for soup_tag in soup.find_all(tag):
+            string = " ".join(_ignore_nested_tags(soup_tag))
+            if string == None:
+                continue
+                
+            frequencies = compute_word_frequencies(Word(token).lemmatize() for token in tokenize(string))
+
+            for token, frequency in frequencies.items():
+                frequency_dict = tag_frequencies.get(token, dict.fromkeys(dict_tags, 0))
+                frequency_dict[tag] = frequency_dict.get(tag) + frequency
+                
+                tag_frequencies[token] = frequency_dict
+    
+    # miscellaneous
+    for token, total_frequency in total_frequencies.items():
+        frequencies = tag_frequencies.get(token) or dict.fromkeys(dict_tags, 0)
+
+        total = 0
+        if frequencies != None:
+            for frequency in frequencies.values():
+                total += frequency
+
+        other_frequency = total_frequency - total
+        frequencies["other"] = other_frequency
+
+        if other_frequency < 0:
+            raise Exception(f'Negative other score: {path}, {token}, {frequencies}')
+
+        tag_frequencies[token] = frequencies
         
-        # miscellaneous
-        for token, total_frequency in total_frequencies.items():
-            frequencies = tag_frequencies.get(token) or dict.fromkeys(dict_tags, 0)
-
-            total = 0
-            if frequencies != None:
-                for frequency in frequencies.values():
-                    total += frequency
-
-            other_frequency = total_frequency - total
-            frequencies["other"] = other_frequency
-
-            if other_frequency < 0:
-                raise Exception(f'Negative other score: {path}, {token}, {frequencies}')
-
-            tag_frequencies[token] = frequencies
-            
-        return tag_frequencies
+    return tag_frequencies
