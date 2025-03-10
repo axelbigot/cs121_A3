@@ -4,6 +4,7 @@ import shutil
 import threading
 import time
 import unittest
+from cProfile import Profile
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
@@ -21,6 +22,8 @@ from retrieval import CLIApp
 
 
 SMALL_DATASET = '../developer/DEV/alderis_ics_uci_edu'
+MEDIUM_DATASET = '../developer/DEV/archive_ics_uci_edu'
+LARGEST_DATASET = '../developer'
 
 def print_trunc(o, chars: int = 500):
     """
@@ -182,8 +185,39 @@ class IndexTests(unittest.TestCase):
         stats = pstats.Stats(profiler)
         stats.strip_dirs().sort_stats('tottime').print_stats(20)
 
-        stats_dir = Path('../build/stats/test_index_performance')
-        shutil.rmtree(stats_dir, ignore_errors=True)
+        self.dump_stats('test_index_performance', profiler)
+
+    def test_index_build_performance(self):
+        profiler = cProfile.Profile()
+        profiler.enable()
+
+        InvertedIndex(MEDIUM_DATASET, name = 'test_index_build_performance')
+
+        profiler.disable()
+
+        stats = pstats.Stats(profiler)
+        stats.strip_dirs().sort_stats('tottime').print_stats(20)
+
+        self.dump_stats('test_index_build_performance', profiler)
+
+    def test_dev_index_build_performance(self):
+        profiler = cProfile.Profile()
+        profiler.enable()
+
+        InvertedIndex(MEDIUM_DATASET,
+                      name = 'test_dev_index_build_performance',
+                      no_duplicate_detection = True)
+
+        profiler.disable()
+
+        stats = pstats.Stats(profiler)
+        stats.strip_dirs().sort_stats('tottime').print_stats(20)
+
+        self.dump_stats('test_dev_index_build_performance', profiler)
+
+    def dump_stats(self, name: str, profiler: Profile):
+        stats_dir = Path(f'../build/stats/{name}')
+        shutil.rmtree(stats_dir, ignore_errors = True)
         stats_dir.mkdir(exist_ok = True, parents = True)
 
         profiler.dump_stats(stats_dir / f'profile_{datetime.now()

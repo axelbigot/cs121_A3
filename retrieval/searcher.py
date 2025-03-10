@@ -1,6 +1,9 @@
 from collections import defaultdict
 from pathlib import Path
 import math
+import logging
+import json
+import re
 
 from nltk.stem import PorterStemmer
 from spellchecker import SpellChecker
@@ -10,6 +13,10 @@ import time
 from index.inverted_index import InvertedIndex, Posting
 from index.path_mapper import PathMapper
 from index.JSONtokenizer import compute_word_frequencies, tokenize, get_soup_from_JSON
+from index.defs import APP_DATA_DIR
+
+_SEARCHER_DIR = APP_DATA_DIR / 'searcher'
+logger = logging.getLogger(__name__)
 
 HTML_TAGS_WEIGHTS = {
     "h1": 0.2, "h2": 0.15, "h3": 0.1, "title": 0.4, "b": 0.075, "strong": 0.055, "other": 0.02
@@ -27,9 +34,58 @@ class Searcher:
         self._index = InvertedIndex(source_dir_path, **kwargs)
         self.path_mapper = self._index._mapper
         self.spellchecker = SpellChecker()
+        self._document_vectors = dict()
+
+        name = re.sub(r'[<>:"/\\|?*]', '_', source_dir_path)
+        self._searcher_disk_path = _SEARCHER_DIR / f'{name}.json'
+
+        if not kwargs['load_existing'] or not self._load():
+            print("Building document_vectors from scratch")
+            logger.debug(f'Building document_vectors from scratch')
+
+            for doc_id, path in self.path_mapper.id_to_path.items():
+                soup = get_soup_from_JSON(path)
+                self._document_vectors[str(doc_id)] = compute_word_frequencies(tokenize(soup.get_text(' ')))
+
+            self._save()
 
         Word("octopi").lemmatize() # used to load data from textblob library so first 
                                        # query processing time is the same as the others
+
+    def _save(self):
+        """
+        Saves the document vectors to disk, so it does not need to be recalculated for later runs.
+        """
+        data = {
+            'document_vectors': self._document_vectors
+        }
+
+        self._searcher_disk_path.parent.mkdir(parents=True, exist_ok=True)
+
+        with open(self._searcher_disk_path, 'w') as f:
+            json.dump(data, f)
+
+        logger.debug(f'Saved searcher to {self._searcher_disk_path}')
+
+    def _load(self) -> bool:
+        """
+        Load the document vectors from disk, if it already exists.
+
+        Returns:
+            True if loading succeeded, false otherwise.
+        """
+        if not self._searcher_disk_path.exists():
+            logger.debug(f'Count not find existing Searcher')
+            return False
+
+        logger.debug(f'Loading Searcher from {self._searcher_disk_path}')
+
+        with open(self._searcher_disk_path, 'r') as f:
+            data = json.load(f)
+
+        self._document_vectors = data["document_vectors"]
+
+        return True
 
     def _process_query(self, query: str) -> set[str]:
         """
@@ -56,21 +112,21 @@ class Searcher:
         expanded_tokens = lemmatized_tokens.union(corrected_tokens)
         return expanded_tokens
 
-    def _cosine_similarity(self, query: str, document_text: str):
+    def _cosine_similarity(self, query: str, doc_id: str):
         """
         Calculate the cosine similarity between a query and a document. The document
         should not include the HTML tags (i.e use soup.get_text()). 1 is similar, 0 is completely different
 
         Args:
             query: search query
-            document_text: text portion of a document
+            doc_id: id of the document according to self.path_mapper
 
         Returns:
             A number representing the cosine of the angle between the 2 strings in vector space.
         """
         # calculate vectors for both strings (vector = word frequencies)
         query_vector = compute_word_frequencies(tokenize(query))
-        document_vector = compute_word_frequencies(tokenize(document_text))
+        document_vector = self._document_vectors[doc_id]
 
         # calculate cosine
         numerator = sum(query_vector.get(word, 0) * document_vector.get(word, 0) for word in set(list(query_vector.keys()) + list(document_vector.keys())))
@@ -113,20 +169,14 @@ class Searcher:
         # filter documents to only include all query tokens
         filtered_docs = {doc: sum(entries.values())
                          for doc, entries in doc_scores.items() if entries.keys() == query_tokens}
-
+        
         # sort documents by relevance score
         sorted_docs = sorted(filtered_docs.items(), key = lambda x : x[1], reverse = True)
 
         # using cosign similarity on sorted items
         cosign_scores: dict[int, int] = defaultdict(int)
         for document_id, _ in sorted_docs[:50]:
-            document_path = self.path_mapper.get_path_by_id(document_id)
-            soup = get_soup_from_JSON(document_path)
-            if not soup:
-                cosign_scores[document_id] = 0
-            else:
-                cosign_scores[document_id] = self._cosine_similarity(query, soup.get_text(' '))
-
+            cosign_scores[document_id] = self._cosine_similarity(query, str(document_id))
 
         # resorting
         sorted_docs = sorted(cosign_scores.items(), key = lambda x : x[1], reverse = True)
