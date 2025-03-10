@@ -1,4 +1,5 @@
 from .searcher import Searcher
+from .summary import Summarizer
 from .CLIApp import CLIApp
 
-__all__ = ['Searcher', 'CLIApp']
+__all__ = ['Searcher', 'Summarizer', 'CLIApp']

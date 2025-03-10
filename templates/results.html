@@ -1,6 +1,6 @@
 <h3 class="search-time">{{ search_time }}</h3>
 
-{% for result in results %}
+{% for result, summary in results|zip(summaries) %}
     <div class="result-item">
         <a href="{{ result }}" target="_blank">{{ result }}</a>
         <div class="details" style="display: none;">
