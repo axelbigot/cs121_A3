@@ -29,9 +29,10 @@ class Searcher:
     Args:
         source_dir_path: Path to the index/searcher data source directory.
     """
-    def __init__(self, source_dir_path: str | Path, **kwargs):
+    def __init__(self, source_dir_path: str | Path, *, use_spellcheck = False, **kwargs):
         # The inverted index providing access to the data source.
         self._index = InvertedIndex(source_dir_path, **kwargs)
+        self._use_spellcheck = use_spellcheck
         self.path_mapper = self._index._mapper
         self.spellchecker = SpellChecker()
         self._document_vectors = dict()
@@ -121,13 +122,15 @@ class Searcher:
         """
 
         # Normalize and tokenize
-        tokens = query.lower().split()
+        tokens = set(query.lower().split())
 
         # Correct spelling errors
-        corrected_tokens = set()
-        for token in tokens:
-            if not self._has_strange_pattern(token):
-                corrected_tokens.add(self.spellchecker.correction(token) or token)
+        corrected_tokens = tokens
+        if self._use_spellcheck:
+            corrected_tokens = set()
+            for token in tokens:
+                if not self._has_strange_pattern(token):
+                    corrected_tokens.add(self.spellchecker.correction(token) or token)
 
         # Lemmatize tokens
         lemmatized_tokens = {Word(token).lemmatize() for token in corrected_tokens}

@@ -15,6 +15,7 @@ DEBUG = os.environ.get('DEBUG', 'False') == 'True'
 SOURCE = os.environ.get('SOURCE', 'developer')
 REBUILD = os.environ.get('REBUILD', 'False') == 'True'
 NO_DUPLICATE_DETECTION = os.environ.get('NO_DUPLICATE_DETECTION', 'True') == 'True'
+USE_SPELLCHECK = os.environ.get('USE_SPELLCHECK', 'False') == 'True'
 
 logging.basicConfig(level = logging.DEBUG if DEBUG else logging.INFO,
                     format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -32,6 +33,7 @@ app = Flask(__name__)
 
 searcher = Searcher(
     SOURCE,
+    use_spellcheck = USE_SPELLCHECK,
     name = 'index_main' if SOURCE == 'developer' else 'index_debug',
     persist = True,
     load_existing = not REBUILD,
