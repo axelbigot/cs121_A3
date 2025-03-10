@@ -113,8 +113,6 @@ class Searcher:
         Processes the query by normalizing, tokenizing, lemmatizing, expanding terms,
         and correcting spelling errors.
 
-        Expands terms using synonyms from WordNet and stemming.
-
         Args:
             query: String search query.
 
