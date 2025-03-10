@@ -152,8 +152,9 @@ class Searcher:
         doc_scores: dict[int, dict[str, int]] = defaultdict(lambda: defaultdict(int))
         
         for token in query_tokens:
-            token_docs = self._index[token].postings
-            token_df = self._index[token].df
+            token_entry = self._index[token]
+            token_docs = token_entry.postings
+            token_df = token_entry.df
 
             for posting in token_docs:
                 doc_id = posting.doc_id
@@ -169,6 +170,9 @@ class Searcher:
         # filter documents to only include all query tokens
         filtered_docs = {doc: sum(entries.values())
                          for doc, entries in doc_scores.items() if entries.keys() == query_tokens}
+
+        # End timer after retrieval -- exclude ranking.
+        end_time = time.perf_counter()
         
         # sort documents by relevance score
         sorted_docs = sorted(filtered_docs.items(), key = lambda x : x[1], reverse = True)
@@ -188,8 +192,6 @@ class Searcher:
             if self.path_mapper.get_url_by_id(doc_id)
         ]
 
-        end_time = time.perf_counter()
         search_time = f"Found {len(result_urls)} results in {round(end_time - start_time, 3)} seconds"
-
         return result_urls, search_time
 

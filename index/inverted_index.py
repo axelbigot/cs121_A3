@@ -129,7 +129,7 @@ class InvertedIndex:
         else:
             # Load an existing index from disk if available and requested.
             self.load()
-            logger.debug(f'Loaded existing InvertedIndex {self.name} from disk. '
+            logger.debug(f'Loaded existing InvertedIndex {self.name} from {self._out_dir} '
                          f'This object now manages it.')
 
         # Speeds up retrieval by processing min tokens of each partition from their paths, doing
@@ -217,6 +217,7 @@ class InvertedIndex:
         name.
         """
         if not self._out_dir.exists():
+            logger.debug(f'Could not find {self._out_dir}')
             return
 
         for disk in self._out_dir.glob('*.bin'):
