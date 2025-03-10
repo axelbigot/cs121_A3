@@ -171,7 +171,7 @@ class Searcher:
         # filter documents to only include all query tokens
         filtered_docs = {doc: sum(entries.values())
                          for doc, entries in doc_scores.items() if entries.keys() == query_tokens}
-
+        
         # sort documents by relevance score
         sorted_docs = sorted(filtered_docs.items(), key = lambda x : x[1], reverse = True)
 
