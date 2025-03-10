@@ -12,7 +12,7 @@ class Summarizer():
         """
         Initializes the Summarizer class and sets up the OpenAI client.
         """
-        self.client = OpenAI()
+        #self.client = OpenAI()
 
     def getSummary(self, url):
         """
@@ -28,6 +28,9 @@ class Summarizer():
             FileNotFoundError: If the file at the provided path does not exist.
             Exception: If there is an issue with the OpenAI API call.
         """
+
+        return "summary for " + str(url) # DELETE WHEN FIXED
+        
         # Open the file in read mode
         with open(url, 'r') as file:
             content = file.read()

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pyfiglet
 from flask import Flask, render_template, url_for, request, jsonify
-from retrieval import Searcher
+from retrieval import Searcher, Summarizer
 from retrieve_index import download_and_unzip_source, download_and_unzip_prebuilt_index
 
 
@@ -48,6 +48,12 @@ searcher = Searcher(
     no_duplicate_detection = NO_DUPLICATE_DETECTION,
 )
 
+summarizer = Summarizer()
+
+@app.template_filter('zip')
+def zip_lists(a, b):
+    return zip(a, b)
+
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -67,9 +73,20 @@ def search():
     end_index = start_index + results_per_page
     paginated_results = results[start_index : end_index]
 
-    summary = "this is a test " * 50
+    summaries = []
+    for result in paginated_results:
+        s = summarizer.getSummary(result) # DELETE WHEN FIXED
 
-    return render_template('results.html', results=paginated_results, search_time=search_time, page=page, total_results=len(results), results_per_page=results_per_page, summary=summary)
+        """ UNCOMMENT WHEN FIXED
+        try: 
+            s = summarizer.getSummary(result)
+        except Exception as e:
+            s = "Summary unavailable."
+        """
+
+        summaries.append(s)
+
+    return render_template('results.html', results=paginated_results, search_time=search_time, page=page, total_results=len(results), results_per_page=results_per_page, summaries=summaries)
     
 if __name__ == '__main__':
     print(pyfiglet.figlet_format('CS121 A3 G100', font = 'slant'))
