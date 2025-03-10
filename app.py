@@ -8,13 +8,21 @@ from retrieval import Searcher
 from retrieve_index import download_and_unzip_source, download_and_unzip_prebuilt_index
 
 
-PROD = os.environ.get('PROD', 'False') == 'True'
-PROD_PREBUILT = os.environ.get('PROD_PREBUILT', 'False') == 'True'
+# Deployment flags. Irrelevant unless you want to run deployment environment locally.
+# Note this enabling these may cause failure, as this is not intended to be run locally.
+# See Dockerfile.
+PROD = os.environ.get('PROD', 'False') == 'True' # Production deployment flag.
+PROD_PREBUILT = os.environ.get('PROD_PREBUILT', 'False') == 'True' # Flag to get prebuilt index
+                                                                   # from S3.
 
-DEBUG = os.environ.get('DEBUG', 'False') == 'True'
-SOURCE = os.environ.get('SOURCE', 'developer')
-REBUILD = os.environ.get('REBUILD', 'False') == 'True'
+DEBUG = os.environ.get('DEBUG', 'False') == 'True' # Enable debug logging.
+SOURCE = os.environ.get('SOURCE', 'developer') # Set target source directory (JSON pages).
+REBUILD = os.environ.get('REBUILD', 'False') == 'True' # Rebuilt from scratch.
+
+# Feature flags.
+# Enable duplicate page detection and elimination - slows index build.
 NO_DUPLICATE_DETECTION = os.environ.get('NO_DUPLICATE_DETECTION', 'True') == 'True'
+# Enable spellchecking - slows querying.
 USE_SPELLCHECK = os.environ.get('USE_SPELLCHECK', 'False') == 'True'
 
 logging.basicConfig(level = logging.DEBUG if DEBUG else logging.INFO,

@@ -21,3 +21,12 @@ a e i o u (526ms)
 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (8873ms)
 Iftekhar Ahmed (375ms)
 nonexistentterm (1292ms)
+
+How we improved our query times?
+
+We found some major inefficiencies in our code between M2 and M3:
+1. Optimized index retrieval by partitioning the index into token-range partitions.
+2. Optimized querying by employing short-circuiting heuristics before applying heavier computation (i.e. pruning non-contestants by if-idf score before doing cosine similarity)
+3. Lemmatized both the index and query for more efficient query expansion (rather than adding synonyms)
+4. Disabled our spellchecker. We initially had a spellchecker, but it performed quite inefficiently on "very poorly spelled" words.
+5. Converted query tokens to a set, as to not repeatedly fetch postings for the same token.
