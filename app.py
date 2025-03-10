@@ -11,7 +11,7 @@ PROD = os.environ.get('PROD', 'False') == 'True'
 PROD_PREBUILT = os.environ.get('PROD_PREBUILT', 'False') == 'True'
 
 DEBUG = os.environ.get('DEBUG', 'False') == 'True'
-SOURCE = os.environ.get('SOURCE', 'developer/archive_ics_uci_edu')
+SOURCE = os.environ.get('SOURCE', 'developer')
 REBUILD = os.environ.get('REBUILD', 'False') == 'True'
 NO_DUPLICATE_DETECTION = os.environ.get('NO_DUPLICATE_DETECTION', 'True') == 'True'
 
