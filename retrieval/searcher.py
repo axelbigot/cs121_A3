@@ -102,7 +102,7 @@ class Searcher:
         """
         if re.search(r'[aeiou]{3,}', word):  # More than 3 consecutive vowels
             return True
-        if re.search(r'[^aeiou]{7,}', word):  # More than 6 consecutive consonants
+        if re.search(r'[^aeiou]{7,}', word):  # More than 7 consecutive consonants
             return True
         if re.search(r'[^a-zA-Z0-9]{3,}', word):  # More than 3 consecutive symbols
             return True
