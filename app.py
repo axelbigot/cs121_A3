@@ -23,14 +23,13 @@ if PROD and not Path(SOURCE).exists():
 
 app = Flask(__name__)
 
-if not DEBUG or os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
-    searcher = Searcher(
-        SOURCE,
-        name = 'index_main' if SOURCE == 'developer' else 'index_debug',
-        persist = True,
-        load_existing = not REBUILD,
-        no_duplicate_detection = NO_DUPLICATE_DETECTION,
-    )
+searcher = Searcher(
+    SOURCE,
+    name = 'index_main' if SOURCE == 'developer' else 'index_debug',
+    persist = True,
+    load_existing = not REBUILD,
+    no_duplicate_detection = NO_DUPLICATE_DETECTION,
+)
 
 @app.route('/')
 def index():
@@ -60,4 +59,4 @@ if __name__ == '__main__':
     logger.debug('Started Application in DEBUG mode')
 
     port = int(os.environ.get('PORT', 8080))
-    app.run(host = '0.0.0.0', port = port, debug=DEBUG)
+    app.run(host = '0.0.0.0', port = port)
