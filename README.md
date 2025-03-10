@@ -15,6 +15,8 @@ Verify protoc is installed by running `protoc --version`. It must be on your PAT
 
 Run the application locally using `python app.py`
 
+See our deployed app here: https://cs121a3-production.up.railway.app/
+
 This will launch a lightweight flask app on port 8080. Making a query should be self-explanatory once the you open the GUI. Just enter your query and press enter.
 
 It is recommended to run the app in debug mode to observe our index build step-by-step.

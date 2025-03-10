@@ -1,4 +1,12 @@
+import logging
+import os
+
 from openai import OpenAI
+
+
+OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
+
+logger = logging.getLogger(__name__)
 
 class Summarizer():
     """
@@ -12,7 +20,10 @@ class Summarizer():
         """
         Initializes the Summarizer class and sets up the OpenAI client.
         """
-        #self.client = OpenAI()
+        if OPENAI_API_KEY:
+            self.client = OpenAI()
+        else:
+            logger.warning('Missing OpenAPI Key. Summaries will not work (don\'t worry, the rest of the app will still run fine).')
 
     def getSummary(self, url):
         """
@@ -28,8 +39,8 @@ class Summarizer():
             FileNotFoundError: If the file at the provided path does not exist.
             Exception: If there is an issue with the OpenAI API call.
         """
-
-        return "summary for " + str(url) # DELETE WHEN FIXED
+        if not OPENAI_API_KEY:
+            return "You haven't set the OPENAI_API_KEY environment variable. AI summaries are disabled!"
         
         # Open the file in read mode
         with open(url, 'r') as file:

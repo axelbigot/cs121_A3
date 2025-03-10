@@ -10,7 +10,7 @@ from spellchecker import SpellChecker
 from textblob import Word
 import time
 
-from index.inverted_index import InvertedIndex, Posting
+from index.inverted_index import InvertedIndex, Posting, result
 from index.path_mapper import PathMapper
 from index.JSONtokenizer import compute_word_frequencies, tokenize, get_soup_from_JSON
 from index.defs import APP_DATA_DIR
@@ -161,7 +161,7 @@ class Searcher:
 
         return numerator / denominator
 
-    def search(self, query: str) -> list[str]:
+    def search(self, query: str) -> tuple[list[tuple[str, str, int]], str]:
         """
         Retrieve the most relevant documents for a given query.
 
@@ -214,7 +214,7 @@ class Searcher:
 
         # get the urls based on document id
         result_urls = [
-            self.path_mapper.get_url_by_id(doc_id) 
+            (self.path_mapper.get_url_by_id(doc_id), self.path_mapper.get_path_by_id(doc_id), doc_id)
             for doc_id, _ in sorted_docs 
             if self.path_mapper.get_url_by_id(doc_id)
         ]

@@ -1,20 +1,28 @@
 <h3 class="search-time">{{ search_time }}</h3>
 
-{% for result, summary in results|zip(summaries) %}
+{% for result in results %}
     <div class="result-item">
-        <a href="{{ result }}" target="_blank">{{ result }}</a>
+        <a href="{{ result[0] }}" target="_blank">{{ result[0] }}</a>
         <div class="details" style="display: none;">
-            <p>{{ summary }}</p>
+            <p id="details{{result[2]}}" class="details-text">Summary Loading...</p>
         </div>
         <button class="toggle-button"
             hx-get="/result-details"
-            hx-target="next .details" 
-            hx-swap="outerHTML" 
+            hx-vals='{"doc_id": "{{ result[2] }}" }'
+            hx-trigger="FetchSummary"
+            hx-target="#details{{result[2]}}"
+            hx-swap="innerHTML"
             hx-on:click=
-                "this.closest('.result-item').classList.toggle('expanded');
+                "let resultItem = this.closest('.result-item');
+                resultItem.classList.toggle('expanded');
                 let details = this.closest('.result-item').querySelector('.details');
                 details.style.display = details.style.display === 'none' ? 'block' : 'none';
-                this.innerText = details.style.display === 'none' ? '▼' : '▲';"> 
+                this.innerText = details.style.display === 'none' ? '▼' : '▲';
+                if (resultItem.classList.contains('expanded')) {
+                    htmx.trigger(this, 'FetchSummary');
+                }
+                "
+            >
             ▼ 
         </button>
     </div>

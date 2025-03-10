@@ -73,20 +73,19 @@ def search():
     end_index = start_index + results_per_page
     paginated_results = results[start_index : end_index]
 
-    summaries = []
-    for result in paginated_results:
-        s = summarizer.getSummary(result) # DELETE WHEN FIXED
+    return render_template(
+        'results.html',
+        results=paginated_results,
+        search_time=search_time,
+        page=page,
+        total_results=len(results),
+        results_per_page=results_per_page
+    )
 
-        """ UNCOMMENT WHEN FIXED
-        try: 
-            s = summarizer.getSummary(result)
-        except Exception as e:
-            s = "Summary unavailable."
-        """
-
-        summaries.append(s)
-
-    return render_template('results.html', results=paginated_results, search_time=search_time, page=page, total_results=len(results), results_per_page=results_per_page, summaries=summaries)
+@app.route('/result-details', methods=['GET'])
+def summary():
+    doc_id = int(request.args.get('doc_id'))
+    return summarizer.getSummary(searcher.path_mapper.get_path_by_id(doc_id))
     
 if __name__ == '__main__':
     print(pyfiglet.figlet_format('CS121 A3 G100', font = 'slant'))
