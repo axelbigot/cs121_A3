@@ -40,7 +40,6 @@ class Searcher:
         self._searcher_disk_path = _SEARCHER_DIR / f'{name}.json'
 
         if not kwargs['load_existing'] or not self._load():
-            print("Building document_vectors from scratch")
             logger.debug(f'Building document_vectors from scratch')
 
             for doc_id, path in self.path_mapper.id_to_path.items():
@@ -87,6 +86,28 @@ class Searcher:
 
         return True
 
+    def _has_strange_pattern(self, word):
+        """
+        Checks for strange patterns in the word such as:
+        - More than 2 consecutive vowels
+        - More than 2 consecutive consonants
+        - Too many consecutive symbols
+
+        Args:
+            word: word to check
+
+        Returns:
+            bool - whether or not the word has strange patterns
+        """
+        if re.search(r'[aeiou]{3,}', word):  # More than 3 consecutive vowels
+            return True
+        if re.search(r'[^aeiou]{7,}', word):  # More than 6 consecutive consonants
+            return True
+        if re.search(r'[^a-zA-Z0-9]{3,}', word):  # More than 3 consecutive symbols
+            return True
+
+        return False
+
     def _process_query(self, query: str) -> set[str]:
         """
         Processes the query by normalizing, tokenizing, lemmatizing, expanding terms,
@@ -103,7 +124,10 @@ class Searcher:
         tokens = query.lower().split()
 
         # Correct spelling errors
-        corrected_tokens = {self.spellchecker.correction(token) or token for token in tokens}
+        corrected_tokens = set()
+        for token in tokens:
+            if not self._has_strange_pattern(token):
+                corrected_tokens.add(self.spellchecker.correction(token) or token)
 
         # Lemmatize tokens
         lemmatized_tokens = {Word(token).lemmatize() for token in corrected_tokens}
@@ -173,7 +197,7 @@ class Searcher:
 
         # End timer after retrieval -- exclude ranking.
         end_time = time.perf_counter()
-        
+
         # sort documents by relevance score
         sorted_docs = sorted(filtered_docs.items(), key = lambda x : x[1], reverse = True)
 
@@ -194,4 +218,3 @@ class Searcher:
 
         search_time = f"Found {len(result_urls)} results in {round(end_time - start_time, 3)} seconds"
         return result_urls, search_time
-
