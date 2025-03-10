@@ -28,6 +28,9 @@ class Searcher:
         self.path_mapper = self._index._mapper
         self.spellchecker = SpellChecker()
 
+        Word("octopi").lemmatize() # used to load data from textblob library so first 
+                                       # query processing time is the same as the others
+
     def _process_query(self, query: str) -> set[str]:
         """
         Processes the query by normalizing, tokenizing, lemmatizing, expanding terms,
@@ -51,7 +54,6 @@ class Searcher:
 
         # Combine all variations
         expanded_tokens = lemmatized_tokens.union(corrected_tokens)
-        print(expanded_tokens)
         return expanded_tokens
 
     def _cosine_similarity(self, query: str, document_text: str):
