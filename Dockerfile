@@ -15,4 +15,4 @@ RUN pip install boto3 # Only used in prod environments.
 RUN python -m textblob.download_corpora
 
 # Start the app
-CMD ["gunicorn", "app:app"]
+CMD ["gunicorn", "-w", "1", "app:app"]
