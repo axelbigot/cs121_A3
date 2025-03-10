@@ -45,7 +45,7 @@ class Searcher:
 
             for doc_id, path in self.path_mapper.id_to_path.items():
                 soup = get_soup_from_JSON(path)
-                self._document_vectors[doc_id] = compute_word_frequencies(tokenize(soup.get_text(' ')))
+                self._document_vectors[str(doc_id)] = compute_word_frequencies(tokenize(soup.get_text(' ')))
 
             self._save()
 
