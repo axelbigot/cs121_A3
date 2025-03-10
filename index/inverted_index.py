@@ -76,12 +76,14 @@ class InvertedIndex:
                  postings_flush_count: int = _DEFAULT_POSTINGS_FLUSH_COUNT,
                  partition_posting_size: int = _DEFAULT_PARTITION_SIZE,
                  persist: bool = False,
-                 load_existing: bool = False):
+                 load_existing: bool = False,
+                 no_duplicate_detection: bool = False):
         logger.debug('Initializing new InvertedIndex')
 
         self.postings_flush_count = postings_flush_count
         self.partition_posting_size = partition_posting_size
         self.persist = persist
+        self.no_duplicate_detection = no_duplicate_detection
 
         self._root_dir = Path(root_dir) # Source dir for this index's pages.
         self._buf: dict[str, TokenEntry] = defaultdict(TokenEntry) # In-memory portion of the index.
@@ -234,8 +236,9 @@ class InvertedIndex:
             # This accesses the file on disk which is inefficient bc the tokenizer does that.
             # We can move this logic to tokenizer which will improve runtime but increase coupling.
             # Putting it here because we build the index only once
-            if self._is_similar(page):
-                continue
+            if not self.no_duplicate_detection:
+                if self._is_similar(page):
+                    continue
 
             self._add_page(page)
 

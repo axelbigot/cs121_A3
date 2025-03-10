@@ -9,6 +9,7 @@ from retrieval import Searcher
 DEBUG = os.environ.get('DEBUG', 'False') == 'True'
 SOURCE = os.environ.get('SOURCE', 'developer')
 REBUILD = os.environ.get('REBUILD', 'False') == 'True'
+NO_DUPLICATE_DETECTION = os.environ.get('NO_DUPLICATE_DETECTION', 'True') == 'True'
 
 logging.basicConfig(level = logging.DEBUG if DEBUG else logging.INFO,
                     format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -22,7 +23,8 @@ if not DEBUG or os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
         SOURCE,
         name = 'index_main' if SOURCE == 'developer' else 'index_debug',
         persist = True,
-        load_existing = not REBUILD
+        load_existing = not REBUILD,
+        no_duplicate_detection = NO_DUPLICATE_DETECTION,
     )
 
 @app.route('/')
