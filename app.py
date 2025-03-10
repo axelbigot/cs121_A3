@@ -5,9 +5,12 @@ from pathlib import Path
 import pyfiglet
 from flask import Flask, render_template, url_for, request, jsonify
 from retrieval import Searcher
-from retrieve_index import download_and_unzip
+from retrieve_index import download_and_unzip_source, download_and_unzip_prebuilt_index
+
 
 PROD = os.environ.get('PROD', 'False') == 'True'
+PROD_PREBUILT = os.environ.get('PROD_PREBUILT', 'False') == 'True'
+
 DEBUG = os.environ.get('DEBUG', 'False') == 'True'
 SOURCE = os.environ.get('SOURCE', 'developer')
 REBUILD = os.environ.get('REBUILD', 'False') == 'True'
@@ -18,8 +21,12 @@ logging.basicConfig(level = logging.DEBUG if DEBUG else logging.INFO,
 
 logger = logging.getLogger(__name__)
 
-if PROD and not Path(SOURCE).exists():
-    download_and_unzip()
+if PROD_PREBUILT and not REBUILD and SOURCE == 'developer':
+    logger.debug('Retrieving prebuilt disks from S3')
+    download_and_unzip_prebuilt_index()
+elif PROD and not Path(SOURCE).exists():
+    logger.debug('Retrieving source pages from S3')
+    download_and_unzip_source()
 
 app = Flask(__name__)
 
