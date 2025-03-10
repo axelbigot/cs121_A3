@@ -1,11 +1,13 @@
 import logging
 import os
+from pathlib import Path
 
 import pyfiglet
 from flask import Flask, render_template, url_for, request, jsonify
 from retrieval import Searcher
+from retrieve_index import download_and_unzip
 
-
+PROD = os.environ.get('PROD', 'False') == 'True'
 DEBUG = os.environ.get('DEBUG', 'False') == 'True'
 SOURCE = os.environ.get('SOURCE', 'developer')
 REBUILD = os.environ.get('REBUILD', 'False') == 'True'
@@ -15,6 +17,9 @@ logging.basicConfig(level = logging.DEBUG if DEBUG else logging.INFO,
                     format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
 logger = logging.getLogger(__name__)
+
+if PROD and not Path(SOURCE).exists():
+    download_and_unzip()
 
 app = Flask(__name__)
 
