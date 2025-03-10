@@ -113,7 +113,7 @@ class Searcher:
         # filter documents to only include all query tokens
         filtered_docs = {doc: sum(entries.values())
                          for doc, entries in doc_scores.items() if entries.keys() == query_tokens}
-
+        
         # sort documents by relevance score
         sorted_docs = sorted(filtered_docs.items(), key = lambda x : x[1], reverse = True)
 
@@ -126,7 +126,6 @@ class Searcher:
                 cosign_scores[document_id] = 0
             else:
                 cosign_scores[document_id] = self._cosine_similarity(query, soup.get_text(' '))
-
 
         # resorting
         sorted_docs = sorted(cosign_scores.items(), key = lambda x : x[1], reverse = True)
